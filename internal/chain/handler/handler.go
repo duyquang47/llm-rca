@@ -73,7 +73,7 @@ func (s *Server) handle(route config.Route) http.HandlerFunc {
 		}
 
 		if route.DB != nil {
-			if err := s.query(ctx, route.DB); err != nil {
+			if err := s.query(ctx, r, route.DB); err != nil {
 				s.log.ErrorContext(ctx, "db query failed", "err", err)
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
@@ -159,13 +159,27 @@ func (s *Server) dbPool(ctx context.Context, db *config.DB) (*pgxpool.Pool, erro
 // DB faults are set with route="db".
 func routeKeyForDB(_ *config.DB) string { return "db" }
 
-func (s *Server) query(ctx context.Context, db *config.DB) error {
+func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) error {
 	pool, err := s.dbPool(ctx, db)
 	if err != nil {
 		return err
 	}
 
-	if _, err := pool.Query(ctx, db.Query); err != nil {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		id = "1"
+	}
+
+	run := func() error {
+		rows, err := pool.Query(ctx, db.Query, id)
+		if err != nil {
+			return err
+		}
+		rows.Close()
+		return rows.Err()
+	}
+
+	if err := run(); err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
 
@@ -174,7 +188,7 @@ func (s *Server) query(ctx context.Context, db *config.DB) error {
 		// of batching, so span count balloons — the signal case #4 relies on.
 		const simulatedRows = 5
 		for i := 0; i < simulatedRows; i++ {
-			if _, err := pool.Query(ctx, db.Query); err != nil {
+			if err := run(); err != nil {
 				return fmt.Errorf("n+1 query %d: %w", i, err)
 			}
 		}

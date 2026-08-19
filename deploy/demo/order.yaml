@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-config
+  namespace: demo
+data:
+  config.yaml: |
+    service_name: order
+    listen: ":8080"
+    routes:
+      - path: /create
+        cache:
+          addr: "redis:6379"
+          key: "user:{user_id}"
+          ttl: 60s
+        calls:
+          - {name: inventory, url: "http://inventory:8080/check", timeout: 500ms, retry: 2}
+          - {name: payment,   url: "http://payment:8080/charge",  timeout: 3s,    retry: 0}
+        publish:
+          addr: "redis:6379"
+          stream: "notifications"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: order}
+  template:
+    metadata:
+      labels: {app: order}
+    spec:
+      containers:
+        - name: app
+          image: chain-service:1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: CONFIG_PATH, value: /etc/chain/config.yaml}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.observability:4317"}
+            - {name: OTEL_SERVICE_NAME, value: "order"}
+          ports:
+            - {containerPort: 8080, name: http}
+            - {containerPort: 9999, name: fault}
+          resources:
+            limits: {memory: 64Mi, cpu: 200m}
+          volumeMounts:
+            - {name: cfg, mountPath: /etc/chain}
+      volumes:
+        - name: cfg
+          configMap: {name: order-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order
+  namespace: demo
+spec:
+  selector: {app: order}
+  ports:
+    - {port: 8080, targetPort: 8080}

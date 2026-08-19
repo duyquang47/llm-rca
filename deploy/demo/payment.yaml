@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-config
+  namespace: demo
+data:
+  config.yaml: |
+    service_name: payment
+    listen: ":8080"
+    routes:
+      - path: /charge
+        calls:
+          - {name: thirdparty-mock, url: "http://thirdparty-mock:8080/pay", timeout: 2s, retry: 0}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: payment}
+  template:
+    metadata:
+      labels: {app: payment}
+    spec:
+      containers:
+        - name: app
+          image: chain-service:1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: CONFIG_PATH, value: /etc/chain/config.yaml}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.observability:4317"}
+            - {name: OTEL_SERVICE_NAME, value: "payment"}
+          ports:
+            - {containerPort: 8080, name: http}
+            - {containerPort: 9999, name: fault}
+          resources:
+            limits: {memory: 64Mi, cpu: 200m}
+          volumeMounts:
+            - {name: cfg, mountPath: /etc/chain}
+      volumes:
+        - name: cfg
+          configMap: {name: payment-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment
+  namespace: demo
+spec:
+  selector: {app: payment}
+  ports:
+    - {port: 8080, targetPort: 8080}

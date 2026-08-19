@@ -1,0 +1,22 @@
+# Four namespaces per CLAUDE.md §2. `chaos` is kept isolated from
+# scrape/log pipelines at the NetworkPolicy/collector-config layer, not
+# here — see deploy/networkpolicy/.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rca
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chaos

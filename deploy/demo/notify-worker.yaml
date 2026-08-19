@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notify-worker-config
+  namespace: demo
+data:
+  config.yaml: |
+    service_name: notify-worker
+    listen: ":8080"
+    consume:
+      addr: "redis:6379"
+      stream: "notifications"
+      group: "notify-worker"
+      consumer: "notify-worker-0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notify-worker
+  namespace: demo
+spec:
+  # Scale to 0 to simulate consumer lag / backlog (case #9) — no other
+  # change needed, the stream just accumulates unacked entries.
+  replicas: 1
+  selector:
+    matchLabels: {app: notify-worker}
+  template:
+    metadata:
+      labels: {app: notify-worker}
+    spec:
+      containers:
+        - name: app
+          image: chain-service:1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: CONFIG_PATH, value: /etc/chain/config.yaml}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.observability:4317"}
+            - {name: OTEL_SERVICE_NAME, value: "notify-worker"}
+          ports:
+            - {containerPort: 9999, name: fault}
+          resources:
+            limits: {memory: 64Mi, cpu: 200m}
+          volumeMounts:
+            - {name: cfg, mountPath: /etc/chain}
+      volumes:
+        - name: cfg
+          configMap: {name: notify-worker-config}
