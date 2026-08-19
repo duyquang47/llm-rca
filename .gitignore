@@ -1,0 +1,29 @@
+# Go
+services/**/bin/
+services/**/*.exe
+vendor/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Secrets / local env
+.env
+.env.*
+*.local.yaml
+kubeconfig*
+
+# k3s / kubectl local artifacts
+*.kubeconfig
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Build / logs
+*.log
+dist/
