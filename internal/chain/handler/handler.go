@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/duyquang47/llm-rca/internal/chain/config"
 	"github.com/duyquang47/llm-rca/internal/chain/faults"
@@ -215,9 +217,20 @@ func (s *Server) publish(ctx context.Context, pub *config.Publish) error {
 	if pub.Addr == "" {
 		return fmt.Errorf("publish.addr is required in config")
 	}
+
+	// Propagate trace context through the stream so notify-worker's
+	// consumer span links back to the request that published it.
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
+	values := map[string]any{"published_at": time.Now().UTC().Format(time.RFC3339)}
+	if tp, ok := carrier["traceparent"]; ok {
+		values["traceparent"] = tp
+	}
+
 	return s.redisClient(pub.Addr).XAdd(ctx, &redis.XAddArgs{
 		Stream: pub.Stream,
-		Values: map[string]any{"published_at": time.Now().UTC().Format(time.RFC3339)},
+		Values: values,
 	}).Err()
 }
 

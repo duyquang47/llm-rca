@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -64,6 +65,15 @@ func Setup(ctx context.Context, cfg Config) (Logger, Shutdown, error) {
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tracerProvider)
+
+	// The global default propagator is a no-op composite — without this,
+	// neither otelhttp's client/server headers nor our stream
+	// traceparent field carry trace context, and every downstream hop
+	// starts a disconnected trace. See CLAUDE.md §4.3.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	logExp, err := otlploggrpc.New(ctx,
 		otlploggrpc.WithEndpoint(cfg.Endpoint),

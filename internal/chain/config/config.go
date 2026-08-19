@@ -43,10 +43,22 @@ type Route struct {
 	Publish *Publish `yaml:"publish"`
 }
 
+// Consume configures notify-worker's background stream-consumer loop —
+// the one deployment in the chain that reacts to a Redis Stream instead
+// of an inbound HTTP route (see CLAUDE.md §2.1 dependency diagram; the
+// route-based Config/Handler in §4.1/§4.2 doesn't cover this shape).
+type Consume struct {
+	Addr     string `yaml:"addr"`
+	Stream   string `yaml:"stream"`
+	Group    string `yaml:"group"`
+	Consumer string `yaml:"consumer"`
+}
+
 type Config struct {
-	ServiceName string  `yaml:"service_name"`
-	Listen      string  `yaml:"listen"`
-	Routes      []Route `yaml:"routes"`
+	ServiceName string   `yaml:"service_name"`
+	Listen      string   `yaml:"listen"`
+	Routes      []Route  `yaml:"routes"`
+	Consume     *Consume `yaml:"consume"`
 }
 
 func Load(path string) (Config, error) {

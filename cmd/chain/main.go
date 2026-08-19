@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/duyquang47/llm-rca/internal/chain/config"
+	"github.com/duyquang47/llm-rca/internal/chain/consumer"
 	"github.com/duyquang47/llm-rca/internal/chain/faults"
 	"github.com/duyquang47/llm-rca/internal/chain/handler"
 	"github.com/duyquang47/llm-rca/pkg/otelinit"
@@ -88,9 +89,21 @@ func run() error {
 		}
 	}()
 
+	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
+	defer cancelConsumer()
+	if cfg.Consume != nil {
+		go func() {
+			if err := consumer.Run(consumerCtx, *cfg.Consume, logger); err != nil {
+				logger.Error("consumer stopped", "err", err)
+			}
+		}()
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+
+	cancelConsumer()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
