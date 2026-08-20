@@ -52,4 +52,5 @@ metadata:
 spec:
   selector: {app: gateway}
   ports:
-    - {port: 8080, targetPort: 8080}
+    - {name: http, port: 8080, targetPort: 8080}
+    - {name: fault, port: 9999, targetPort: 9999}
