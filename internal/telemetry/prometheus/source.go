@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -31,7 +32,15 @@ func New(baseURL string) *Source {
 // duration histogram, present for every demo service with no extra
 // instrumentation needed. Extend this list once more scenarios need
 // error-rate or resource-usage diffs.
-const p99LatencyByService = `histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, job))`
+//
+// Groups by exported_job, not job: every demo service is scraped
+// through the single otel-collector Prometheus exporter target, so
+// Prometheus's ServiceMonitor scrape renames the OTel resource's own
+// `job` (the actual service name) to `exported_job` and overwrites
+// `job` with the scrape target's own name ("otel-collector") — the
+// default relabeling behavior when honor_labels isn't set. Grouping
+// by `job` here would silently collapse every service into one series.
+const p99LatencyByService = `histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, exported_job))`
 
 func (s *Source) MetricDiffVsBaseline(ctx context.Context, w telemetry.Window) ([]contextpack.MetricDelta, error) {
 	current, err := s.instantQuery(ctx, p99LatencyByService, w.To)
@@ -119,10 +128,14 @@ func (s *Source) instantQuery(ctx context.Context, query string, at time.Time) (
 			continue
 		}
 		val, err := strconv.ParseFloat(valStr, 64)
-		if err != nil {
+		// histogram_quantile returns "NaN" for a series with no
+		// observations in the window; math.IsNaN both because
+		// ParseFloat happily accepts the literal "NaN" and because
+		// json.Marshal errors on NaN float64s later in Build.
+		if err != nil || math.IsNaN(val) {
 			continue
 		}
-		out = append(out, sample{job: r.Metric["job"], value: val})
+		out = append(out, sample{job: r.Metric["exported_job"], value: val})
 	}
 	return out, nil
 }
