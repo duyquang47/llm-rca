@@ -1,0 +1,41 @@
+# Alertmanager route to incident-orchestrator's webhook. Applied via:
+#   helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     -n observability --reuse-values -f deploy/rca/alertmanager-values.yaml
+# --reuse-values merges this on top of the original
+# kube-prometheus-stack-values.yaml (grafana memory, disabled
+# node-exporter, etc.) instead of resetting them.
+alertmanager:
+  config:
+    global:
+      resolve_timeout: 5m
+    inhibit_rules:
+      - equal: [namespace, alertname]
+        source_matchers: [severity = critical]
+        target_matchers: [severity =~ warning|info]
+      - equal: [namespace, alertname]
+        source_matchers: [severity = warning]
+        target_matchers: [severity = info]
+      - equal: [namespace]
+        source_matchers: [alertname = InfoInhibitor]
+        target_matchers: [severity = info]
+      - target_matchers: [alertname = InfoInhibitor]
+    route:
+      receiver: "null"
+      group_by: [namespace]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      routes:
+        - matchers: [alertname = "Watchdog"]
+          receiver: "null"
+        - matchers: [alertname = "HighP99Latency"]
+          receiver: orchestrator-webhook
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 1h
+    receivers:
+      - name: "null"
+      - name: orchestrator-webhook
+        webhook_configs:
+          - url: "http://orchestrator.rca.svc.cluster.local:8080/webhook"
+            send_resolved: false

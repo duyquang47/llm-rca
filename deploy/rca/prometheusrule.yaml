@@ -1,0 +1,25 @@
+# SLO-based alert per CLAUDE.md §6.1 ("Alert rule nên là SLO-based
+# (error ratio, p99 latency, burn rate), không phải 'CPU cao'").
+# service label is templated from exported_job — see the note in
+# internal/telemetry/prometheus/source.go about why the demo services'
+# real job name ends up under exported_job, not job, once scraped
+# through otel-collector's single Prometheus exporter target.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-slo-alerts
+  namespace: observability
+  labels: {release: kube-prometheus-stack}
+spec:
+  groups:
+    - name: demo-slo
+      rules:
+        - alert: HighP99Latency
+          expr: |
+            histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le, exported_job)) > 1
+          for: 30s
+          labels:
+            severity: critical
+            service: "{{ $labels.exported_job }}"
+          annotations:
+            summary: "p99 latency for {{ $labels.exported_job }} exceeded 1s"

@@ -1,0 +1,47 @@
+# incident-orchestrator per CLAUDE.md §6.1. GEMINI_API_KEY comes from
+# a Secret created out-of-band (kubectl create secret ... — never
+# commit the key itself):
+#   kubectl create secret generic llm-api-keys -n rca \
+#     --from-literal=gemini-api-key=<key>
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: rca
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: orchestrator}
+  template:
+    metadata:
+      labels: {app: orchestrator}
+    spec:
+      containers:
+        - name: orchestrator
+          image: orchestrator:1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: CLICKHOUSE_ADDR, value: "clickhouse.observability:9000"}
+            - {name: CLICKHOUSE_USER, value: "otel"}
+            - {name: CLICKHOUSE_PASSWORD, value: "otel"}
+            - {name: CLICKHOUSE_DATABASE, value: "otel"}
+            - {name: PROMETHEUS_URL, value: "http://kube-prometheus-stack-prometheus.observability:9090"}
+            - {name: LISTEN_ADDR, value: ":8080"}
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef: {name: llm-api-keys, key: gemini-api-key}
+          ports:
+            - {containerPort: 8080, name: http}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 300m, memory: 384Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: rca
+spec:
+  selector: {app: orchestrator}
+  ports:
+    - {port: 8080, targetPort: 8080}
