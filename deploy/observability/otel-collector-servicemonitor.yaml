@@ -1,0 +1,18 @@
+# Without this, Prometheus never scrapes otel-collector's :8889
+# endpoint, so every metric emitted by the demo services (via
+# otelhttp's built-in http.server/client.duration instruments) never
+# reaches Prometheus at all — found while wiring up MetricDiffVsBaseline
+# in internal/telemetry/prometheus. kube-prometheus-stack's
+# serviceMonitorSelector is {} (matches everything), so no special
+# labels are needed here.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector:
+    matchLabels: {app: otel-collector}
+  endpoints:
+    - port: prom-metrics
+      interval: 15s
