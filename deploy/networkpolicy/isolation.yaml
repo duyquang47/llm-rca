@@ -1,0 +1,36 @@
+# Isolation boundary per CLAUDE.md §2.4. Verified enforced on this
+# cluster (2026-08-20) via Calico — k3s's default flannel CNI does NOT
+# enforce NetworkPolicy at all; had to migrate CNI to get here (see
+# project memory for the two k3s+Calico path gotchas hit along the
+# way). Verification must be done from inside another pod, not by
+# curling from the host: NetworkPolicy only governs pod-to-pod
+# traffic, and host-originated traffic is exempted by design in most
+# CNIs including Calico — curling from the host looks "unblocked" even
+# when policy is enforced correctly, which is a trap when writing the
+# acceptance test for this.
+#
+# Blocks ingress into chaos-namespace pods from rca (must never reach
+# the ground truth store) and observability (chaos must not be
+# scraped/logged) in a single rule — two separate NetworkPolicy
+# objects here would OR together across the union of both policies'
+# allow-lists and silently defeat each other (a from-not-rca policy
+# plus a from-not-observability policy each individually ALLOWS the
+# namespace the other one is trying to block).
+#
+# Defense-in-depth, not the only safeguard: ground truth is a local
+# JSON file inside fault-controller's own pod filesystem with no
+# network endpoint at all, so context-builder/orchestrator have
+# nothing to reach even without this policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chaos-deny-rca-and-observability-ingress
+  namespace: chaos
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - {key: kubernetes.io/metadata.name, operator: NotIn, values: [rca, observability]}

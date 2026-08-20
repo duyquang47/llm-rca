@@ -1,0 +1,29 @@
+# Case #1 (CLAUDE.md §7): inventory chậm, symptom lộ ra ở gateway.
+# Root cause cách symptom 2 hop (gateway -> order -> inventory).
+name: timeout_cascade
+steps:
+  - target: inventory
+    action: set_config
+    params:
+      route: /check
+      latency: {probability: 1.0, ms: 1300}
+  - action: wait
+    duration: 90s
+  - target: inventory
+    action: reset
+    params: {route: /check}
+
+ground_truth:
+  service: inventory
+  cause: downstream_latency
+  distractors: [gateway_overload, order_bug]
+
+context_assertions:
+  must_include_service: [inventory, order, gateway]
+  must_rank_in_top3: inventory
+  must_include_log_template_matching: "(?i)downstream call failed|context deadline exceeded|timeout"
+  must_include_metric_delta:
+    - {name_matches: "http_server_request_duration", min_pct_diff: 50}
+  must_not_include: ["fault", "inject", "chaos", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

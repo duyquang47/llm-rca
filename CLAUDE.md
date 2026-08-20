@@ -100,6 +100,18 @@ k6                → sinh tải nền 20–50 rps
   Một request bị inject latency phải trông y hệt một request chậm thật.
 - NetworkPolicy chặn context-builder truy cập ground truth store.
 
+> **Ghi chú bổ sung — CNI mặc định của k3s không enforce NetworkPolicy:** flannel (CNI mặc định,
+> không tách pod riêng) hoàn toàn bỏ qua object `NetworkPolicy` — đã kiểm chứng thực nghiệm bằng
+> policy deny-all, traffic vẫn lọt qua bình thường. Phải đổi sang Calico (nhẹ hơn Cilium, phù hợp
+> ngân sách tài nguyên) mới có isolation network thật. Khi ghép Calico vào k3s có 2 lỗi cần biết:
+> (1) manifest Calico cài CNI conflist vào `/etc/cni/net.d/` chuẩn, nhưng kubelet của k3s chỉ đọc
+> `/var/lib/rancher/k3s/agent/etc/cni/net.d/` — phải copy thủ công + xóa `10-flannel.conflist` cũ;
+> (2) tương tự, binary `calico`/`calico-ipam` cài vào `/opt/cni/bin/` chuẩn nhưng k3s tìm ở
+> `/var/lib/rancher/k3s/data/cni/` — cũng phải copy thủ công. Ngoài ra, **test isolation phải chạy
+> từ trong 1 pod khác**, không phải `curl` từ máy host — NetworkPolicy chỉ áp cho traffic pod-to-pod,
+> traffic từ chính node host thường được miễn trừ mặc định (kể cả khi Calico hoạt động đúng), nên
+> test từ host luôn cho kết quả "không bị chặn" giả dù policy đã enforce đúng.
+
 > **Ghi chú bổ sung — đường rò rỉ qua k8s Event:** với các fault cần patch trực tiếp k8s resource
 > thay vì qua `/_fault` (VD case #6, hạ CPU limit), k8s Event sinh ra (bị `kubernetes-event-exporter`
 > bắt theo mục 5) mang namespace `demo`, **không** bị chặn bởi luật loại-trừ namespace `chaos`, và

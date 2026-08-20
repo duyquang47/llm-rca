@@ -1,0 +1,128 @@
+// Command faultctl reads a scenario YAML (CLAUDE.md §7), executes its
+// steps against the demo namespace's /_fault endpoints, and records
+// ground truth to a store isolated from context-builder/orchestrator.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/duyquang47/llm-rca/internal/groundtruth"
+	"github.com/duyquang47/llm-rca/internal/scenario"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	scenarioPath := flag.String("scenario", "", "path to scenario YAML (required)")
+	demoNamespace := flag.String("demo-namespace", "demo", "namespace the target services run in")
+	groundTruthDir := flag.String("ground-truth-dir", envOr("GROUND_TRUTH_DIR", "/var/lib/faultctl/ground-truth"), "where to write ground truth records")
+	flag.Parse()
+
+	if *scenarioPath == "" {
+		return fmt.Errorf("-scenario is required")
+	}
+
+	sc, err := scenario.Load(*scenarioPath)
+	if err != nil {
+		return err
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	startedAt := time.Now()
+
+	for i, step := range sc.Steps {
+		fmt.Printf("[%s] step %d: action=%s target=%s\n", sc.Name, i+1, step.Action, step.Target)
+		switch step.Action {
+		case "set_config":
+			if err := setConfig(client, *demoNamespace, step); err != nil {
+				return fmt.Errorf("step %d (set_config): %w", i+1, err)
+			}
+		case "reset":
+			if err := resetConfig(client, *demoNamespace, step); err != nil {
+				return fmt.Errorf("step %d (reset): %w", i+1, err)
+			}
+		case "wait":
+			d, err := time.ParseDuration(step.Duration)
+			if err != nil {
+				return fmt.Errorf("step %d (wait): invalid duration %q: %w", i+1, step.Duration, err)
+			}
+			time.Sleep(d)
+		default:
+			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
+		}
+	}
+
+	store := groundtruth.NewStore(*groundTruthDir)
+	if err := store.Save(groundtruth.Record{
+		ScenarioName: sc.Name,
+		Service:      sc.GroundTruth.Service,
+		Cause:        sc.GroundTruth.Cause,
+		Distractors:  sc.GroundTruth.Distractors,
+		StartedAt:    startedAt,
+	}); err != nil {
+		return fmt.Errorf("save ground truth: %w", err)
+	}
+
+	fmt.Printf("[%s] done, ground truth recorded (service=%s cause=%s)\n", sc.Name, sc.GroundTruth.Service, sc.GroundTruth.Cause)
+	return nil
+}
+
+// setConfig POSTs step.Params directly as the /_fault JSON body — the
+// scenario YAML's params keys are written to match faults.Spec's json
+// tags exactly (route, latency, error, cpu_burn, mem_leak, pool_size),
+// so no field-by-field mapping is needed.
+func setConfig(client *http.Client, namespace string, step scenario.Step) error {
+	body, err := json.Marshal(step.Params)
+	if err != nil {
+		return fmt.Errorf("marshal fault spec: %w", err)
+	}
+	url := fmt.Sprintf("http://%s.%s:9999/_fault", step.Target, namespace)
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("POST %s: unexpected status %d", url, resp.StatusCode)
+	}
+	return nil
+}
+
+func resetConfig(client *http.Client, namespace string, step scenario.Step) error {
+	route, _ := step.Params["route"].(string)
+	if route == "" {
+		return fmt.Errorf("reset step requires params.route")
+	}
+	url := fmt.Sprintf("http://%s.%s:9999/_fault?route=%s", step.Target, namespace, route)
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("DELETE %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("DELETE %s: unexpected status %d", url, resp.StatusCode)
+	}
+	return nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
