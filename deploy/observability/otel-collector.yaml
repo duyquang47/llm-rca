@@ -1,0 +1,116 @@
+# otel-collector-contrib per CLAUDE.md §5. k8sattributes needs
+# ClusterRole list/watch on pods+namespaces — missing this is a "silent
+# failure" per §5.1 point 3: the collector runs fine but attaches no
+# k8s.* labels at all.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: observability
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Not in CLAUDE.md §5.1's RBAC list, but needed in practice: k8sattributes
+  # resolves k8s.deployment.name by walking Pod -> ReplicaSet -> Deployment,
+  # which requires watching replicasets too. Without it the collector still
+  # runs — another instance of the "silent failure" §5.1 warns about.
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: observability
+roleRef:
+  kind: ClusterRole
+  name: otel-collector
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: observability
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc: {endpoint: 0.0.0.0:4317}
+
+    processors:
+      k8sattributes:
+        extract:
+          metadata: [k8s.pod.name, k8s.deployment.name, k8s.node.name, k8s.namespace.name]
+      batch: {timeout: 5s}
+
+    exporters:
+      clickhouse:
+        endpoint: tcp://clickhouse.observability:9000?username=otel&password=otel
+        database: otel
+        ttl: 48h
+      prometheus:
+        endpoint: 0.0.0.0:8889
+
+    service:
+      pipelines:
+        traces:  {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse]}
+        logs:    {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse]}
+        metrics: {receivers: [otlp], processors: [k8sattributes, batch], exporters: [prometheus]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: otel-collector}
+  template:
+    metadata:
+      labels: {app: otel-collector}
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+        # Pinned above 0.114.x deliberately: that version has RBAC/config
+        # matching the k8sattributesprocessor docs exactly but silently
+        # never populates k8s.deployment.name (key absent from
+        # ResourceAttributes, not just empty) — confirmed fixed at 0.159.0.
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.159.0
+          args: ["--config=/etc/otel/config.yaml"]
+          ports:
+            - {containerPort: 4317, name: otlp-grpc}
+            - {containerPort: 8889, name: prom-metrics}
+          volumeMounts:
+            - {name: cfg, mountPath: /etc/otel}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 300m, memory: 256Mi}
+      volumes:
+        - name: cfg
+          configMap: {name: otel-collector-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: observability
+  labels: {app: otel-collector}
+spec:
+  selector: {app: otel-collector}
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: 4317}
+    - {name: prom-metrics, port: 8889, targetPort: 8889}
