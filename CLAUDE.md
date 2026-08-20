@@ -320,7 +320,10 @@ Bốn lệnh nghiệm thu, chạy trước khi sang bước 1.2 — bất kỳ l
 ```bash
 # 1. cAdvisor metrics có tới Prometheus không
 curl -s 'localhost:9090/api/v1/query?query=container_memory_working_set_bytes{namespace="demo"}' | jq '.data.result | length'
-curl -s 'localhost:9090/api/v1/query?query=container_cpu_cfs_throttled_seconds_total' | jq '.data.result | length'
+curl -s 'localhost:9090/api/v1/query?query=container_cpu_cfs_throttled_periods_total' | jq '.data.result | length'
+# ↑ tên metric đã đổi so với bản gốc (container_cpu_cfs_throttled_seconds_total không còn tồn tại
+#   trên cAdvisor đi kèm k8s 1.36 — xác nhận qua /api/v1/label/__name__/values). Target scrape vẫn
+#   "up" bình thường (job=kubelet, metrics_path=/metrics/cadvisor); chỉ là đổi tên field.
 
 # 2. kube-state-metrics có dữ liệu restart không
 curl -s 'localhost:9090/api/v1/query?query=kube_pod_container_status_restarts_total' | jq '.data.result | length'

@@ -1,0 +1,45 @@
+# Values for prometheus-community/kube-prometheus-stack, sized down for
+# the POC's tight local resource budget (CLAUDE.md §8). cAdvisor scraping
+# (§5.1 point 1) and kube-state-metrics both come bundled with this
+# chart — do not deploy a second standalone kube-state-metrics.
+prometheus:
+  prometheusSpec:
+    retention: 24h
+    resources:
+      requests: {cpu: 150m, memory: 256Mi}
+      limits: {cpu: 350m, memory: 512Mi}
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: {cpu: 20m, memory: 32Mi}
+      limits: {cpu: 100m, memory: 64Mi}
+
+grafana:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 150m, memory: 384Mi}
+  adminPassword: admin
+  defaultDashboardsEnabled: false
+
+kube-state-metrics:
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {cpu: 50m, memory: 64Mi}
+
+# Disabled: node-exporter's host-rootfs mount hits a WSL2-specific
+# limitation ("path / ... not a shared or slave mount") — a runc/WSL2
+# mount-propagation issue, not something fixable via chart config. Not
+# required by CLAUDE.md anyway (§5.1 only needs kubelet/cAdvisor
+# container metrics, which this chart's Prometheus scrapes regardless).
+nodeExporter:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests: {cpu: 30m, memory: 64Mi}
+    limits: {cpu: 100m, memory: 128Mi}
