@@ -48,6 +48,13 @@ data:
       otlp:
         protocols:
           grpc: {endpoint: 0.0.0.0:4317}
+      # cmd/eventwatcher dumps k8s Events to this hostPath file (same
+      # node — single-node cluster) and we tail it here. See
+      # eventwatcher.yaml for why it's a custom binary, not
+      # kubernetes-event-exporter.
+      filelog:
+        include: ["/var/log/k8s-events/events.log"]
+        start_at: beginning
 
     processors:
       k8sattributes:
@@ -65,9 +72,10 @@ data:
 
     service:
       pipelines:
-        traces:  {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse]}
-        logs:    {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse]}
-        metrics: {receivers: [otlp], processors: [k8sattributes, batch], exporters: [prometheus]}
+        traces:      {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse]}
+        logs:        {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse]}
+        logs/events: {receivers: [filelog], processors: [batch], exporters: [clickhouse]}
+        metrics:     {receivers: [otlp], processors: [k8sattributes, batch], exporters: [prometheus]}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -96,12 +104,15 @@ spec:
             - {containerPort: 8889, name: prom-metrics}
           volumeMounts:
             - {name: cfg, mountPath: /etc/otel}
+            - {name: events, mountPath: /var/log/k8s-events, readOnly: true}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 300m, memory: 256Mi}
       volumes:
         - name: cfg
           configMap: {name: otel-collector-config}
+        - name: events
+          hostPath: {path: /var/log/k8s-events, type: DirectoryOrCreate}
 ---
 apiVersion: v1
 kind: Service
