@@ -247,6 +247,16 @@ func scanLogLines(rows driver.Rows) ([]telemetry.LogLine, error) {
 // K8sEvents reads events written by cmd/eventwatcher, which land in
 // otel_logs via the collector's filelog receiver (no ServiceName set
 // for that pipeline, so events are identified by Body shape instead).
+//
+// The namespace='demo' filter is defense-in-depth, not the only
+// safeguard: eventwatcher itself is scoped to WATCH_NAMESPACE=demo
+// (see cmd/eventwatcher), so chaos/rca/observability events shouldn't
+// reach otel_logs at all. This query filtered nothing before that fix
+// and a real scenario run leaked a chaos-namespace pod's own
+// Scheduled/Started events straight into the LLM's evidence — it
+// cited "faultctl-timeout-cascade-..." running in namespace "chaos" as
+// the root cause. Keeping the filter here too means a future source
+// that isn't properly scoped doesn't silently leak again.
 func (s *Source) K8sEvents(ctx context.Context, w telemetry.Window) ([]contextpack.K8sEvent, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT Timestamp,
@@ -258,6 +268,7 @@ func (s *Source) K8sEvents(ctx context.Context, w telemetry.Window) ([]contextpa
 		FROM otel_logs
 		WHERE Timestamp BETWEEN ? AND ?
 		  AND Body LIKE '%involved_object_kind%'
+		  AND JSONExtractString(Body, 'namespace') = 'demo'
 		ORDER BY Timestamp`, w.From, w.To)
 	if err != nil {
 		return nil, fmt.Errorf("query k8s events: %w", err)

@@ -50,6 +50,10 @@ spec:
         - name: faultctl
           image: faultctl:1.0
           imagePullPolicy: IfNotPresent
+          # chainguard/static base runs non-root by default, which
+          # can't write to the root-owned hostPath dir kubelet creates
+          # (same fix as cmd/eventwatcher).
+          securityContext: {runAsUser: 0}
           args: ["-scenario=/etc/faultctl/scenario.yaml", "-demo-namespace=demo"]
           env:
             - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}

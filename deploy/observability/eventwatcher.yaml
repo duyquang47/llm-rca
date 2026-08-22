@@ -17,27 +17,34 @@ metadata:
   name: eventwatcher
   namespace: observability
 ---
+# Role (not ClusterRole), scoped to the demo namespace only — matches
+# eventwatcher's own WATCH_NAMESPACE=demo default. A cluster-wide
+# ClusterRole here previously let the informer watch every namespace
+# including chaos, which is exactly how the leak above happened: RBAC
+# breadth and code scope must agree, or a future code regression that
+# drops the namespace filter would silently start leaking again with
+# no RBAC error to catch it.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: eventwatcher
+  namespace: demo
 rules:
-  # Only events — no object-lookup/enrichment step exists to need
-  # broader RBAC, which sidesteps the whole failure class above.
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: eventwatcher
+  namespace: demo
 subjects:
   - kind: ServiceAccount
     name: eventwatcher
     namespace: observability
 roleRef:
-  kind: ClusterRole
+  kind: Role
   name: eventwatcher
   apiGroup: rbac.authorization.k8s.io
 ---
