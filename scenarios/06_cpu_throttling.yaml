@@ -8,16 +8,41 @@
 # internal/scenario/assertions_test.go's
 # TestCheckPack_DirectK8sPatchEventShapeDoesNotLeak for the dedicated
 # check CLAUDE.md calls for.
+#
+# Patching the limit alone wasn't enough to produce real throttling —
+# live testing showed inventory's actual CPU demand at 20rps of
+# trivial SELECT queries is low (mostly waiting on I/O, not computing),
+# so even 100m comfortably handled it with almost no throttled
+# periods. cpu_burn (already supported via /_fault, 200ms of busy-loop
+# per request) stands in for "this endpoint does real CPU work under
+# normal operation" — without it there's no way to demonstrate a limit
+# being *too low* for legitimate work, only that trivial work needs
+# almost no CPU regardless of the limit.
+#
+# patch_cpu_limit triggers a Deployment rollout — a brand new pod, with
+# fresh (empty) in-memory fault state, same issue case #5 hit with
+# OOMKill/restart. A one-shot set_config for cpu_burn would race the
+# rollout (it might land on the old pod right before it terminates,
+# missing the new one entirely). sustain_fault re-POSTs every 3s for
+# its own duration, which both self-heals that race and doubles as the
+# wait step.
 name: cpu_throttling
 steps:
   - target: inventory
     action: patch_cpu_limit
     params:
       millicores: 100
-  - action: wait
+  - target: inventory
+    action: sustain_fault
     duration: 90s
+    params:
+      route: /check
+      cpu_burn: true
   - target: inventory
     action: reset_cpu_limit
+  - target: inventory
+    action: reset
+    params: {route: /check}
 
 ground_truth:
   service: inventory

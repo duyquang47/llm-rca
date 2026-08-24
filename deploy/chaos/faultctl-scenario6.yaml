@@ -11,10 +11,17 @@ data:
         action: patch_cpu_limit
         params:
           millicores: 100
-      - action: wait
+      - target: inventory
+        action: sustain_fault
         duration: 90s
+        params:
+          route: /check
+          cpu_burn: true
       - target: inventory
         action: reset_cpu_limit
+      - target: inventory
+        action: reset
+        params: {route: /check}
     ground_truth:
       service: inventory
       cause: cpu_throttling
