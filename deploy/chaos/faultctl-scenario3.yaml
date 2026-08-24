@@ -12,8 +12,11 @@ data:
         params:
           route: db
           pool_size: 2
-      - action: wait
-        duration: 90s
+      - action: burst_load
+        duration: 60s
+        params:
+          url: "http://gateway.demo:8080/create?user_id=1&id=1"
+          concurrency: 30
       - target: inventory
         action: reset
         params: {route: db}

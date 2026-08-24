@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/duyquang47/llm-rca/internal/groundtruth"
@@ -58,6 +59,10 @@ func run() error {
 				return fmt.Errorf("step %d (wait): invalid duration %q: %w", i+1, step.Duration, err)
 			}
 			time.Sleep(d)
+		case "burst_load":
+			if err := burstLoad(client, step); err != nil {
+				return fmt.Errorf("step %d (burst_load): %w", i+1, err)
+			}
 		default:
 			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
 		}
@@ -124,6 +129,54 @@ func resetConfig(client *http.Client, namespace string, step scenario.Step) erro
 		return fmt.Errorf("DELETE %s: unexpected status %d", url, resp.StatusCode)
 	}
 	return nil
+}
+
+// burstLoad hammers params.url with params.concurrency goroutines for
+// step.Duration. Needed for scenarios like case #3 (pool exhaustion)
+// where CLAUDE.md §7 explicitly calls for "pool_size=2 + tăng tải" —
+// the background k6 rate (20rps) alone is nowhere near enough to
+// contend for 2 Postgres connections when each query only takes a few
+// ms, so the fault alone produces no observable signal without a
+// concurrent burst forcing requests to actually queue on the pool.
+func burstLoad(client *http.Client, step scenario.Step) error {
+	url, _ := step.Params["url"].(string)
+	if url == "" {
+		return fmt.Errorf("burst_load requires params.url")
+	}
+	concurrency := paramInt(step.Params["concurrency"], 10)
+	d, err := time.ParseDuration(step.Duration)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", step.Duration, err)
+	}
+
+	deadline := time.Now().Add(d)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(deadline) {
+				resp, err := client.Get(url)
+				if err != nil {
+					continue
+				}
+				resp.Body.Close()
+			}
+		}()
+	}
+	wg.Wait()
+	return nil
+}
+
+func paramInt(v any, fallback int) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	default:
+		return fallback
+	}
 }
 
 func envOr(key, fallback string) string {

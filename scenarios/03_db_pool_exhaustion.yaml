@@ -7,6 +7,13 @@
 # routeKeyForDB always keys pool-size faults as route="db" regardless
 # of the HTTP route (internal/chain/handler/handler.go), so that's
 # what set_config/reset must target here, not "/check".
+#
+# The background k6 load (20rps) alone never contends for just 2
+# Postgres connections — each query is a few ms, so 2 connections
+# comfortably clear 20rps with no queueing. CLAUDE.md §7 explicitly
+# calls for "pool_size=2 + tăng tải"; burst_load supplies that "tăng
+# tải" by hammering gateway with 30 concurrent requests for the
+# fault's duration, forcing real contention on the 2-connection pool.
 name: db_pool_exhaustion
 steps:
   - target: inventory
@@ -14,8 +21,11 @@ steps:
     params:
       route: db
       pool_size: 2
-  - action: wait
-    duration: 90s
+  - action: burst_load
+    duration: 60s
+    params:
+      url: "http://gateway.demo:8080/create?user_id=1&id=1"
+      concurrency: 30
   - target: inventory
     action: reset
     params: {route: db}
