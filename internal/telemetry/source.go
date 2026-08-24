@@ -27,6 +27,12 @@ type LogLine struct {
 	Service   string
 	Severity  string
 	Body      string
+	// Target is the "target" LogAttributes key our own handler code
+	// sets on downstream-call failures (internal/chain/handler) — the
+	// name of the service the failing call was aimed at, which Drain's
+	// template clustering would otherwise wildcard away since it's
+	// just one short varying token in an otherwise-identical message.
+	Target string
 }
 
 type ChangeRecord struct {

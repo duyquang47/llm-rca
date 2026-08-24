@@ -7,6 +7,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
@@ -161,7 +162,8 @@ func (s *Source) pickExemplarTraceIDs(ctx context.Context, w telemetry.Window, n
 
 func (s *Source) traceDetail(ctx context.Context, traceID string) (contextpack.TraceDetail, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT SpanName, ServiceName, Duration, StatusCode
+		SELECT SpanName, ServiceName, Duration, StatusCode,
+		       SpanAttributes['http.response.status_code']
 		FROM otel_traces WHERE TraceId = ?
 		ORDER BY Timestamp ASC`, traceID)
 	if err != nil {
@@ -172,15 +174,17 @@ func (s *Source) traceDetail(ctx context.Context, traceID string) (contextpack.T
 	var spans []contextpack.Span
 	var maxDuration uint64
 	for rows.Next() {
-		var name, svc, status string
+		var name, svc, status, httpStatus string
 		var duration uint64
-		if err := rows.Scan(&name, &svc, &duration, &status); err != nil {
+		if err := rows.Scan(&name, &svc, &duration, &status, &httpStatus); err != nil {
 			return contextpack.TraceDetail{}, err
 		}
+		httpCode, _ := strconv.Atoi(httpStatus) // empty/non-HTTP spans just get 0
 		spans = append(spans, contextpack.Span{
 			Name: name, Service: svc,
-			DurationMs: int64(duration / uint64(time.Millisecond)),
-			StatusCode: status,
+			DurationMs:     int64(duration / uint64(time.Millisecond)),
+			StatusCode:     status,
+			HTTPStatusCode: httpCode,
 		})
 		if duration > maxDuration {
 			maxDuration = duration
@@ -208,7 +212,7 @@ func (s *Source) LogsForTraces(ctx context.Context, traceIDs []string) ([]teleme
 		return nil, nil
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT Timestamp, TraceId, ServiceName, SeverityText, Body
+		SELECT Timestamp, TraceId, ServiceName, SeverityText, Body, LogAttributes['target']
 		FROM otel_logs WHERE TraceId IN ? ORDER BY Timestamp`, traceIDs)
 	if err != nil {
 		return nil, fmt.Errorf("query logs for traces: %w", err)
@@ -221,7 +225,7 @@ func (s *Source) LogsForTraces(ctx context.Context, traceIDs []string) ([]teleme
 // LogsForTraces returns empty (a service logging without trace_id).
 func (s *Source) LogsByService(ctx context.Context, w telemetry.Window) ([]telemetry.LogLine, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT Timestamp, TraceId, ServiceName, SeverityText, Body
+		SELECT Timestamp, TraceId, ServiceName, SeverityText, Body, LogAttributes['target']
 		FROM otel_logs
 		WHERE Timestamp BETWEEN ? AND ? AND ServiceName = ?
 		ORDER BY Timestamp`, w.From, w.To, w.Service)
@@ -236,7 +240,7 @@ func scanLogLines(rows driver.Rows) ([]telemetry.LogLine, error) {
 	var out []telemetry.LogLine
 	for rows.Next() {
 		var l telemetry.LogLine
-		if err := rows.Scan(&l.Timestamp, &l.TraceID, &l.Service, &l.Severity, &l.Body); err != nil {
+		if err := rows.Scan(&l.Timestamp, &l.TraceID, &l.Service, &l.Severity, &l.Body, &l.Target); err != nil {
 			return nil, fmt.Errorf("scan log line: %w", err)
 		}
 		out = append(out, l)

@@ -127,3 +127,33 @@ func TestBuild_CapsLogTemplatesAtMax(t *testing.T) {
 		t.Errorf("want capped at %d templates, got %d", maxLogTemplates, len(pack.LogTemplates))
 	}
 }
+
+// TestBuild_PreservesTargetDespiteTemplateMerging reproduces the
+// evidence-recall miss found running case #11 for real: two
+// "downstream call failed" lines aimed at different targets are >75%
+// similar token-for-token, so Drain merges them into one template and
+// wildcards the target position — meaning the target name would be
+// lost unless it's tracked as a separate aggregation.
+func TestBuild_PreservesTargetDespiteTemplateMerging(t *testing.T) {
+	now := time.Now()
+	src := &fakeSource{
+		exemplars: []contextpack.TraceDetail{{TraceID: "abc"}},
+		logs: []telemetry.LogLine{
+			{Timestamp: now, TraceID: "abc", Service: "payment", Body: "downstream call failed", Target: "thirdparty-mock"},
+			{Timestamp: now, TraceID: "abc", Service: "order", Body: "downstream call failed", Target: "payment"},
+		},
+	}
+
+	pack, err := Build(context.Background(), src, telemetry.Window{Service: "gateway"}, contextpack.AlertSummary{}, "incident-5")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if len(pack.LogTemplates) != 1 {
+		t.Fatalf("want the two messages merged into 1 template (that's the point being tested), got %d", len(pack.LogTemplates))
+	}
+	targets := pack.LogTemplates[0].Targets
+	if targets["thirdparty-mock"] != 1 || targets["payment"] != 1 {
+		t.Errorf("want both targets preserved in the aggregation despite template merging, got %v", targets)
+	}
+}

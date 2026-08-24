@@ -126,6 +126,9 @@ func servicesIn(pack contextpack.ContextPack) map[string]bool {
 		for svc := range t.ByService {
 			out[svc] = true
 		}
+		for target := range t.Targets {
+			out[target] = true
+		}
 	}
 	return out
 }

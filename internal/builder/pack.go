@@ -108,6 +108,7 @@ func clusterLogs(logs []telemetry.LogLine) []contextpack.TemplateStat {
 		firstSeen time.Time
 		lastSeen  time.Time
 		byService map[string]int
+		targets   map[string]int
 	}
 	byTemplateID := map[int]*agg{}
 
@@ -115,11 +116,18 @@ func clusterLogs(logs []telemetry.LogLine) []contextpack.TemplateStat {
 		id, template := d.Add(l.Body)
 		a, ok := byTemplateID[id]
 		if !ok {
-			a = &agg{template: template, byService: map[string]int{}, firstSeen: l.Timestamp, lastSeen: l.Timestamp}
+			a = &agg{template: template, byService: map[string]int{}, targets: map[string]int{}, firstSeen: l.Timestamp, lastSeen: l.Timestamp}
 			byTemplateID[id] = a
 		}
 		a.count++
 		a.byService[l.Service]++
+		// Kept separate from the template text on purpose — Drain
+		// would just wildcard a target name away as one short varying
+		// token among an otherwise-identical message (see contextpack.
+		// TemplateStat.Targets doc comment for why this matters).
+		if l.Target != "" {
+			a.targets[l.Target]++
+		}
 		if l.Timestamp.Before(a.firstSeen) {
 			a.firstSeen = l.Timestamp
 		}
@@ -132,6 +140,10 @@ func clusterLogs(logs []telemetry.LogLine) []contextpack.TemplateStat {
 	id := 0
 	for _, a := range byTemplateID {
 		id++
+		targets := a.targets
+		if len(targets) == 0 {
+			targets = nil // omitempty in the JSON tag needs a true nil, not an empty map
+		}
 		stats = append(stats, contextpack.TemplateStat{
 			TemplateID: id,
 			Template:   a.template,
@@ -139,6 +151,7 @@ func clusterLogs(logs []telemetry.LogLine) []contextpack.TemplateStat {
 			FirstSeen:  a.firstSeen,
 			LastSeen:   a.lastSeen,
 			ByService:  a.byService,
+			Targets:    targets,
 			RateShape:  rateShape(a.firstSeen, a.lastSeen),
 		})
 	}
