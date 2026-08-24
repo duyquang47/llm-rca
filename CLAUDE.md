@@ -742,6 +742,31 @@ ground_truth:
 
 Case 13 là bài kiểm tra thật sự: hệ thống có xếp hạng được nguyên nhân, hay chỉ liệt kê mọi bất thường?
 
+> **Ghi chú bổ sung — cặp #1+#11 không thật sự "độc lập" vì thứ tự `calls` trong order-config:**
+> chạy case #13 thật (inventory latency + thirdparty-mock 429 đồng thời) cho kết quả `recall=0.5`
+> — LLM chỉ xếp hạng được `inventory`, hoàn toàn bỏ sót `thirdparty-mock`. Kiểm tra `context_pack`
+> đã lưu (§10 GĐ1, `context_assertions PASS` nên không phải lỗi Phase 1) cho thấy đây không phải
+> lỗi mô hình: exemplar trace của `payment→thirdparty-mock` trong pack ghi `http_status_code: 200`,
+> log template "downstream call failed" không có `targets: thirdparty-mock` nào — bằng chứng cho
+> lỗi 429 gần như không tồn tại trong pack để LLM dùng.
+>
+> Nguyên nhân gốc: handler generic (§4.2) lặp qua `route.Calls` và **trả lỗi ngay khi gặp lỗi đầu
+> tiên** (`for _, call := range route.Calls { if err ... return }`). `order-config` (§4.1) liệt kê
+> `calls: [inventory, payment]` — inventory đứng trước. Khi inventory bị inject latency 1300ms với
+> `timeout: 500ms, retry: 2`, mọi request đều hết cả 3 lần thử trong ~1.5s rồi trả 502 ngay, **order
+> không bao giờ gọi tới payment** trong suốt cửa sổ fault. Fault độc lập ở `thirdparty-mock` vì vậy
+> bị "đói" traffic hoàn toàn — không phải do trùng lặp/nhiễu tín hiệu, mà do chuỗi gọi đồng bộ,
+> dừng-khi-lỗi-đầu-tiên khiến 2 fault trên cùng một route không bao giờ cùng biểu hiện qua traffic
+> thật, dù được kích hoạt đồng thời ở tầng `/_fault`.
+>
+> Đây là giới hạn thật của cách chọn cặp fault cho case #13, không phải lỗi builder/prompt/model —
+> nên giữ nguyên làm kết quả báo cáo (đúng tinh thần "phạm vi khẳng định, đừng khẳng định quá tay"
+> ở mục 12), kèm ghi chú giải thích thay vì đổi cặp fault để "ép" ra kết quả đẹp hơn. Nếu muốn một
+> case độc lập-thật-sự sau này, cần chọn 2 fault không chia sẻ cùng một `calls` list tuần tự (VD một
+> fault trên nhánh cache — chạy trước `calls` loop và không làm request thất bại — ghép với một
+> fault trên nhánh `calls`), hoặc đổi ngữ nghĩa handler từ "dừng khi lỗi đầu tiên" sang "gọi hết rồi
+> gộp lỗi" — đổi thứ hai ảnh hưởng toàn bộ 12 kịch bản còn lại nên không nên làm chỉ vì case #13.
+
 **Metric đánh giá:** top-1 accuracy, MRR, và tỷ lệ chọn nhầm distractor.
 
 ---
