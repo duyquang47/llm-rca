@@ -54,18 +54,28 @@ type MetricDeltaAssertion struct {
 	MinPctDiff  float64 `yaml:"min_pct_diff"`
 }
 
+// SpanRepeatedAssertion checks for a span name repeated MinCount+ times
+// within a single exemplar trace — the distinguishing signal for case
+// #4 (N+1 query): the count of "pg.query" spans in one trace, not any
+// log line or metric, is what tells N+1 apart from a single slow query.
+type SpanRepeatedAssertion struct {
+	Name     string `yaml:"name"`
+	MinCount int    `yaml:"min_count"`
+}
+
 // ContextAssertions are CLAUDE.md §10 GĐ1's declarative acceptance
 // checks for evidence recall — run against the ContextPack, not the
 // LLM output, so a failure points at Phase 1 (collection), never
 // Phase 2 (prompt/model).
 type ContextAssertions struct {
-	MustIncludeService             []string               `yaml:"must_include_service"`
-	MustRankInTop3                 string                 `yaml:"must_rank_in_top3"`
-	MustIncludeLogTemplateMatching string                 `yaml:"must_include_log_template_matching"`
-	MustIncludeMetricDelta         []MetricDeltaAssertion `yaml:"must_include_metric_delta"`
-	MustNotInclude                 []string               `yaml:"must_not_include"`
-	MaxTokens                      int                    `yaml:"max_tokens"`
-	MaxServicesIncluded            int                    `yaml:"max_services_included"`
+	MustIncludeService             []string                `yaml:"must_include_service"`
+	MustRankInTop3                 string                  `yaml:"must_rank_in_top3"`
+	MustIncludeLogTemplateMatching string                  `yaml:"must_include_log_template_matching"`
+	MustIncludeMetricDelta         []MetricDeltaAssertion  `yaml:"must_include_metric_delta"`
+	MustIncludeSpanRepeated        []SpanRepeatedAssertion `yaml:"must_include_span_repeated"`
+	MustNotInclude                 []string                `yaml:"must_not_include"`
+	MaxTokens                      int                     `yaml:"max_tokens"`
+	MaxServicesIncluded            int                     `yaml:"max_services_included"`
 }
 
 type Scenario struct {

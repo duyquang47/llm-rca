@@ -64,6 +64,25 @@ func (a ContextAssertions) CheckPack(pack contextpack.ContextPack) []string {
 		}
 	}
 
+	for _, want := range a.MustIncludeSpanRepeated {
+		found := false
+		for _, ex := range pack.Exemplars {
+			count := 0
+			for _, s := range ex.Spans {
+				if s.Name == want.Name {
+					count++
+				}
+			}
+			if count >= want.MinCount {
+				found = true
+				break
+			}
+		}
+		if !found {
+			violations = append(violations, fmt.Sprintf("must_include_span_repeated: no exemplar trace has >= %d spans named %q", want.MinCount, want.Name))
+		}
+	}
+
 	if len(a.MustNotInclude) > 0 {
 		raw, err := json.Marshal(pack)
 		if err != nil {

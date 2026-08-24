@@ -27,8 +27,9 @@ type ErrorFault struct {
 	Code        int     `json:"code"`
 }
 
-// Spec is the payload accepted by POST /_fault. PoolSize is a pointer so
-// "absent" (no override) is distinguishable from "explicitly set to 0".
+// Spec is the payload accepted by POST /_fault. PoolSize/NPlusOne are
+// pointers so "absent" (no override) is distinguishable from
+// "explicitly set to the zero value".
 type Spec struct {
 	Route    string        `json:"route"`
 	Latency  *LatencyFault `json:"latency,omitempty"`
@@ -36,6 +37,7 @@ type Spec struct {
 	CPUBurn  bool          `json:"cpu_burn"`
 	MemLeak  bool          `json:"mem_leak"`
 	PoolSize *int          `json:"pool_size,omitempty"`
+	NPlusOne *bool         `json:"n_plus_one,omitempty"`
 }
 
 // StatusError carries the fault's configured HTTP status code so the
@@ -91,6 +93,16 @@ func (c *Controller) EffectivePoolSize(route string, configured int) int {
 		return configured
 	}
 	return *spec.PoolSize
+}
+
+// EffectiveNPlusOne applies the same override precedence as
+// EffectivePoolSize, for case #4 (N+1 query pattern).
+func (c *Controller) EffectiveNPlusOne(route string, configured bool) bool {
+	spec, ok := c.get(route)
+	if !ok || spec.NPlusOne == nil {
+		return configured
+	}
+	return *spec.NPlusOne
 }
 
 // Apply probabilistically injects latency and/or an error for route,

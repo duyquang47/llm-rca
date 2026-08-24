@@ -39,6 +39,10 @@ var dbPoolWait = func() metric.Float64Histogram {
 	return h
 }()
 
+// dbTracer names each individual query execution "pg.query" as its own
+// child span — see the doc comment where it's used in query()/run().
+var dbTracer = otel.Tracer("chain/db")
+
 type Server struct {
 	cfg    config.Config
 	faults *faults.Controller
@@ -201,21 +205,31 @@ func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) erro
 		}
 		defer conn.Release()
 
-		rows, err := conn.Query(ctx, db.Query, id)
+		// pgx isn't wrapped with an OTel query tracer, so without an
+		// explicit span here a request that fires N+1 queries and a
+		// request that fires one look identical in every trace — the
+		// comment below used to claim "span count balloons" while no
+		// span existed at all. This span is what makes that claim true.
+		spanCtx, span := dbTracer.Start(ctx, "pg.query")
+		rows, err := conn.Query(spanCtx, db.Query, id)
 		if err != nil {
+			span.End()
 			return err
 		}
 		rows.Close()
-		return rows.Err()
+		err = rows.Err()
+		span.End()
+		return err
 	}
 
 	if err := run(); err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
 
-	if db.NPlusOne {
-		// Simulate the N+1 pattern: re-issue the same query per "row" instead
-		// of batching, so span count balloons — the signal case #4 relies on.
+	if s.faults.EffectiveNPlusOne(routeKeyForDB(db), db.NPlusOne) {
+		// Simulate the N+1 pattern: re-issue the same query per "row"
+		// instead of batching, so span count balloons — the signal
+		// case #4 relies on.
 		const simulatedRows = 5
 		for i := 0; i < simulatedRows; i++ {
 			if err := run(); err != nil {
