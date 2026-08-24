@@ -16,12 +16,33 @@ import (
 	"time"
 )
 
+// Cause is one valid root cause: a (service, cause) pair. Mirrors
+// internal/scenario.Cause — kept as a separate type so this package
+// doesn't need to import scenario just for one struct shape.
+type Cause struct {
+	Service string `json:"service"`
+	Cause   string `json:"cause"`
+}
+
 type Record struct {
 	ScenarioName string    `json:"scenario_name"`
 	Service      string    `json:"service"`
 	Cause        string    `json:"cause"`
+	Causes       []Cause   `json:"causes,omitempty"`
 	Distractors  []string  `json:"distractors"`
 	StartedAt    time.Time `json:"started_at"`
+}
+
+// AllCauses mirrors scenario.GroundTruth.AllCauses — normalizes the
+// single-cause and multi-cause (case #13) shapes into one list.
+func (r Record) AllCauses() []Cause {
+	if len(r.Causes) > 0 {
+		return r.Causes
+	}
+	if r.Service == "" {
+		return nil
+	}
+	return []Cause{{Service: r.Service, Cause: r.Cause}}
 }
 
 type Store struct {

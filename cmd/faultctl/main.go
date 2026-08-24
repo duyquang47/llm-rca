@@ -63,18 +63,24 @@ func run() error {
 		}
 	}
 
+	var causes []groundtruth.Cause
+	for _, c := range sc.GroundTruth.Causes {
+		causes = append(causes, groundtruth.Cause{Service: c.Service, Cause: c.Cause})
+	}
+
 	store := groundtruth.NewStore(*groundTruthDir)
 	if err := store.Save(groundtruth.Record{
 		ScenarioName: sc.Name,
 		Service:      sc.GroundTruth.Service,
 		Cause:        sc.GroundTruth.Cause,
+		Causes:       causes,
 		Distractors:  sc.GroundTruth.Distractors,
 		StartedAt:    startedAt,
 	}); err != nil {
 		return fmt.Errorf("save ground truth: %w", err)
 	}
 
-	fmt.Printf("[%s] done, ground truth recorded (service=%s cause=%s)\n", sc.Name, sc.GroundTruth.Service, sc.GroundTruth.Cause)
+	fmt.Printf("[%s] done, ground truth recorded (%d cause(s))\n", sc.Name, len(sc.GroundTruth.AllCauses()))
 	return nil
 }
 

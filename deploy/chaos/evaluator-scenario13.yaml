@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: evaluator-concurrent-faults
+  namespace: chaos
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: evaluator
+          image: evaluator:1.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-scenario=concurrent_faults"
+            - "-scenario-file=/etc/faultctl/scenario.yaml"
+          env:
+            - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}
+            - {name: CLICKHOUSE_ADDR, value: "clickhouse.observability:9000"}
+            - {name: CLICKHOUSE_USER, value: "otel"}
+            - {name: CLICKHOUSE_PASSWORD, value: "otel"}
+            - {name: CLICKHOUSE_DATABASE, value: "otel"}
+          volumeMounts:
+            - {name: scenario, mountPath: /etc/faultctl}
+            - {name: ground-truth, mountPath: /var/lib/faultctl/ground-truth}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: scenario
+          configMap: {name: scenario-13-concurrent-faults}
+        - name: ground-truth
+          hostPath: {path: /var/lib/faultctl/ground-truth, type: DirectoryOrCreate}

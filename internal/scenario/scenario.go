@@ -16,10 +16,37 @@ type Step struct {
 	Duration string         `yaml:"duration,omitempty"`
 }
 
+// Cause is one valid root cause: a (service, cause) pair.
+type Cause struct {
+	Service string `yaml:"service"`
+	Cause   string `yaml:"cause"`
+}
+
+// GroundTruth's Service/Cause fields cover the common single-cause
+// case (12 of the 13 CLAUDE.md §7 scenarios). Causes exists for case
+// #13 specifically — two independent faults injected concurrently,
+// where the whole point of the scenario is testing whether the model
+// ranks *both* real causes instead of picking one and ignoring the
+// other. Kept as a separate field rather than replacing Service/Cause
+// so the 12 single-cause scenario YAMLs don't need touching.
 type GroundTruth struct {
 	Service     string   `yaml:"service"`
 	Cause       string   `yaml:"cause"`
+	Causes      []Cause  `yaml:"causes,omitempty"`
 	Distractors []string `yaml:"distractors"`
+}
+
+// AllCauses normalizes the single-cause and multi-cause shapes into
+// one list, so callers (evaluator) don't need to branch on which
+// field was populated.
+func (g GroundTruth) AllCauses() []Cause {
+	if len(g.Causes) > 0 {
+		return g.Causes
+	}
+	if g.Service == "" {
+		return nil
+	}
+	return []Cause{{Service: g.Service, Cause: g.Cause}}
 }
 
 type MetricDeltaAssertion struct {

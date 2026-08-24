@@ -76,7 +76,31 @@ func run() error {
 		return fmt.Errorf("parse llm_output for incident %s: %w", incident.IncidentID, err)
 	}
 
-	top1, mrr, distractorHit := score(gt, result)
+	causes := gt.AllCauses()
+	isMultiCause := len(causes) > 1
+
+	var top1, mrr float64
+	var distractorHit bool
+	var recall float64
+	var perCauseRank map[string]int
+	if isMultiCause {
+		recall, perCauseRank = scoreMultiCause(causes, result)
+		// Reuse the two existing score columns rather than add a
+		// schema column for a shape only one of the 13 scenarios has:
+		// recall stands in for top1, average per-cause MRR for mrr.
+		top1 = recall
+		var mrrSum float64
+		for _, rank := range perCauseRank {
+			if rank > 0 {
+				mrrSum += 1 / float64(rank)
+			}
+		}
+		if len(causes) > 0 {
+			mrr = mrrSum / float64(len(causes))
+		}
+	} else {
+		top1, mrr, distractorHit = score(gt, result)
+	}
 
 	if *scenarioFile != "" {
 		sc, err := scenario.Load(*scenarioFile)
@@ -109,16 +133,32 @@ func run() error {
 	}
 
 	fmt.Printf("scenario:        %s\n", gt.ScenarioName)
-	fmt.Printf("ground_truth:    service=%s cause=%s distractors=%v\n", gt.Service, gt.Cause, gt.Distractors)
+	if isMultiCause {
+		fmt.Printf("ground_truth:    %d causes: %v distractors=%v\n", len(causes), causes, gt.Distractors)
+	} else {
+		fmt.Printf("ground_truth:    service=%s cause=%s distractors=%v\n", gt.Service, gt.Cause, gt.Distractors)
+	}
 	fmt.Printf("incident_id:     %s (llm_model=%s)\n", incident.IncidentID, incident.LLMModel)
 	fmt.Printf("ranked_causes:   ")
 	for _, c := range result.RankedCauses {
 		fmt.Printf("[%d]%s(%.2f) ", c.Rank, c.Service, c.Confidence)
 	}
 	fmt.Println()
-	fmt.Printf("top1:            %.0f\n", top1)
-	fmt.Printf("mrr:             %.3f\n", mrr)
-	fmt.Printf("distractor_hit:  %v (top-ranked service matched a known distractor, not ground truth)\n", distractorHit)
+	if isMultiCause {
+		fmt.Printf("recall:          %.3f (fraction of the %d true causes found anywhere in the ranking)\n", recall, len(causes))
+		for svc, rank := range perCauseRank {
+			if rank > 0 {
+				fmt.Printf("  %s: rank %d\n", svc, rank)
+			} else {
+				fmt.Printf("  %s: not ranked at all\n", svc)
+			}
+		}
+		fmt.Printf("avg_mrr:         %.3f\n", mrr)
+	} else {
+		fmt.Printf("top1:            %.0f\n", top1)
+		fmt.Printf("mrr:             %.3f\n", mrr)
+		fmt.Printf("distractor_hit:  %v (top-ranked service matched a known distractor, not ground truth)\n", distractorHit)
+	}
 
 	if err := updateScores(ctx, conn, incident.IncidentID, top1, mrr); err != nil {
 		return fmt.Errorf("write scores back to incidents table: %w", err)
@@ -180,6 +220,34 @@ func score(gt groundtruth.Record, result llm.RCAResult) (top1, mrr float64, dist
 	}
 
 	return top1, mrr, distractorHit
+}
+
+// scoreMultiCause handles case #13's shape: more than one valid root
+// cause injected concurrently. A single top1/mrr number would hide
+// the actual question CLAUDE.md §7 poses for this case — "hệ thống
+// có xếp hạng được nguyên nhân, hay chỉ liệt kê mọi bất thường?" — so
+// this reports recall (fraction of true causes found anywhere in the
+// ranking) and each cause's individual rank instead.
+func scoreMultiCause(causes []groundtruth.Cause, result llm.RCAResult) (recall float64, perCauseRank map[string]int) {
+	perCauseRank = map[string]int{}
+	found := 0
+	for _, c := range causes {
+		rank := 0
+		for _, rc := range result.RankedCauses {
+			if rc.Service == c.Service {
+				rank = rc.Rank
+				break
+			}
+		}
+		perCauseRank[c.Service] = rank
+		if rank > 0 {
+			found++
+		}
+	}
+	if len(causes) > 0 {
+		recall = float64(found) / float64(len(causes))
+	}
+	return recall, perCauseRank
 }
 
 func updateScores(ctx context.Context, conn ch.Conn, incidentID string, top1, mrr float64) error {
