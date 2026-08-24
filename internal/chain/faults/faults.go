@@ -38,6 +38,18 @@ type Spec struct {
 	PoolSize *int          `json:"pool_size,omitempty"`
 }
 
+// StatusError carries the fault's configured HTTP status code so the
+// handler can actually respond with it. Apply used to just embed the
+// code in an fmt.Errorf string, which the handler never read — every
+// injected error came back as a hardcoded 500 regardless of what
+// error.code the scenario asked for (found running case #11, whose
+// 429 never once showed up in any metric).
+type StatusError struct {
+	Code int
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("injected fault: status %d", e.Code) }
+
 // Controller holds fault state in memory, reset on pod restart per §4.4.
 type Controller struct {
 	mu    sync.RWMutex
@@ -109,7 +121,7 @@ func (c *Controller) Apply(ctx context.Context, route string) error {
 	}
 
 	if spec.Error != nil && rand.Float64() < spec.Error.Probability {
-		return fmt.Errorf("injected fault: status %d", spec.Error.Code)
+		return &StatusError{Code: spec.Error.Code}
 	}
 
 	return nil

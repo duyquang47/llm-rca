@@ -4,6 +4,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,7 +63,12 @@ func (s *Server) handle(route config.Route) http.HandlerFunc {
 		ctx := r.Context()
 
 		if err := s.faults.Apply(ctx, route.Path); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			code := http.StatusInternalServerError
+			var statusErr *faults.StatusError
+			if errors.As(err, &statusErr) && statusErr.Code != 0 {
+				code = statusErr.Code
+			}
+			http.Error(w, "internal error", code)
 			return
 		}
 
@@ -217,7 +223,11 @@ func (s *Server) callDownstream(ctx context.Context, inbound *http.Request, call
 		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode >= 500 {
+		// >=400, not just >=500: a 429 from a rate-limited downstream
+		// (case #11) was silently treated as success before this fix —
+		// nothing about "≥500 only" reflects real HTTP client behavior,
+		// where 4xx is exactly as much a failed call as 5xx.
+		if resp.StatusCode >= 400 {
 			lastErr = fmt.Errorf("%s returned %d", call.Name, resp.StatusCode)
 			continue
 		}

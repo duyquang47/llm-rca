@@ -23,3 +23,20 @@ spec:
             service: "{{ $labels.exported_job }}"
           annotations:
             summary: "p99 latency for {{ $labels.exported_job }} exceeded 1s"
+        # Added after scenario #2 (bad_deploy) proved HighP99Latency alone
+        # is blind to fast-failing errors: a 500 returned immediately
+        # doesn't move p99 latency at all, only the error ratio does.
+        # CLAUDE.md §6.1 lists error ratio as its own SLO type, not a
+        # latency proxy — this is that missing rule, not a latency tweak.
+        - alert: HighErrorRate
+          expr: |
+            sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[1m])) by (exported_job)
+            /
+            sum(rate(http_server_request_duration_seconds_count[1m])) by (exported_job)
+            > 0.1
+          for: 30s
+          labels:
+            severity: critical
+            service: "{{ $labels.exported_job }}"
+          annotations:
+            summary: "error ratio for {{ $labels.exported_job }} exceeded 10%"

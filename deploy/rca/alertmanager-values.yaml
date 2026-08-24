@@ -28,7 +28,13 @@ alertmanager:
       routes:
         - matchers: [alertname = "Watchdog"]
           receiver: "null"
-        - matchers: [alertname = "HighP99Latency"]
+        # Matches on the service label existing rather than listing
+        # alertnames one by one — HighErrorRate (added after scenario
+        # #2 showed HighP99Latency alone can't see fast-failing errors)
+        # would otherwise fall through to the null receiver just like
+        # any other new SLO rule added later without remembering to
+        # update this route too.
+        - matchers: [service =~ ".+"]
           receiver: orchestrator-webhook
           group_wait: 10s
           group_interval: 1m
