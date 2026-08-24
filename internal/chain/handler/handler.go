@@ -17,11 +17,27 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/duyquang47/llm-rca/internal/chain/config"
 	"github.com/duyquang47/llm-rca/internal/chain/faults"
 )
+
+// dbPoolWait records time spent blocked in pgxpool.Acquire — the direct
+// signal for case #3 (pool exhaustion). Without it, a starved pool looks
+// identical to a slow downstream call (both just inflate the server
+// span's total duration), which defeats the point of the scenario: the
+// LLM has nothing to distinguish "not enough connections" from "DB is
+// slow" per se. Named to match the "db_pool_wait" match CLAUDE.md §7's
+// case #3 context_assertions example already specifies.
+var dbPoolWait = func() metric.Float64Histogram {
+	h, _ := otel.Meter("chain/db").Float64Histogram(
+		"db_pool_wait_seconds",
+		metric.WithDescription("time spent waiting to acquire a DB connection from the pool"),
+	)
+	return h
+}()
 
 type Server struct {
 	cfg    config.Config
@@ -177,7 +193,15 @@ func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) erro
 	}
 
 	run := func() error {
-		rows, err := pool.Query(ctx, db.Query, id)
+		acquireStart := time.Now()
+		conn, err := pool.Acquire(ctx)
+		dbPoolWait.Record(ctx, time.Since(acquireStart).Seconds())
+		if err != nil {
+			return fmt.Errorf("acquire connection: %w", err)
+		}
+		defer conn.Release()
+
+		rows, err := conn.Query(ctx, db.Query, id)
 		if err != nil {
 			return err
 		}

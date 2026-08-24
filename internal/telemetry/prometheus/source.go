@@ -42,37 +42,55 @@ func New(baseURL string) *Source {
 // by `job` here would silently collapse every service into one series.
 const p99LatencyByService = `histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, exported_job))`
 
+// dbPoolWaitP99 is case #3's dedicated signal — see handler.dbPoolWait's
+// doc comment for why a starved connection pool needs its own metric
+// rather than relying on overall request latency, which looks identical
+// to a genuinely slow downstream call.
+const dbPoolWaitP99 = `histogram_quantile(0.99, sum(rate(db_pool_wait_seconds_bucket[5m])) by (le, exported_job))`
+
+type metricQuery struct {
+	name  string
+	query string
+}
+
+var diffQueries = []metricQuery{
+	{name: "http_server_request_duration_p99_seconds", query: p99LatencyByService},
+	{name: "db_pool_wait_seconds_p99", query: dbPoolWaitP99},
+}
+
 func (s *Source) MetricDiffVsBaseline(ctx context.Context, w telemetry.Window) ([]contextpack.MetricDelta, error) {
-	current, err := s.instantQuery(ctx, p99LatencyByService, w.To)
-	if err != nil {
-		return nil, fmt.Errorf("query current p99: %w", err)
-	}
-	baseline, err := s.instantQuery(ctx, p99LatencyByService, w.To.Add(-24*time.Hour))
-	if err != nil {
-		return nil, fmt.Errorf("query baseline p99: %w", err)
-	}
-
-	baselineByJob := map[string]float64{}
-	for _, r := range baseline {
-		baselineByJob[r.job] = r.value
-	}
-
 	var out []contextpack.MetricDelta
-	for _, r := range current {
-		base := baselineByJob[r.job]
-		pctDiff := 0.0
-		if base > 0 {
-			pctDiff = (r.value - base) / base * 100
-		} else if r.value > 0 {
-			pctDiff = 100
+	for _, mq := range diffQueries {
+		current, err := s.instantQuery(ctx, mq.query, w.To)
+		if err != nil {
+			return nil, fmt.Errorf("query current %s: %w", mq.name, err)
 		}
-		out = append(out, contextpack.MetricDelta{
-			Name:     "http_server_request_duration_p99_seconds",
-			Labels:   map[string]string{"service": r.job},
-			Current:  r.value,
-			Baseline: base,
-			PctDiff:  pctDiff,
-		})
+		baseline, err := s.instantQuery(ctx, mq.query, w.To.Add(-24*time.Hour))
+		if err != nil {
+			return nil, fmt.Errorf("query baseline %s: %w", mq.name, err)
+		}
+
+		baselineByJob := map[string]float64{}
+		for _, r := range baseline {
+			baselineByJob[r.job] = r.value
+		}
+
+		for _, r := range current {
+			base := baselineByJob[r.job]
+			pctDiff := 0.0
+			if base > 0 {
+				pctDiff = (r.value - base) / base * 100
+			} else if r.value > 0 {
+				pctDiff = 100
+			}
+			out = append(out, contextpack.MetricDelta{
+				Name:     mq.name,
+				Labels:   map[string]string{"service": r.job},
+				Current:  r.value,
+				Baseline: base,
+				PctDiff:  pctDiff,
+			})
+		}
 	}
 	return out, nil
 }
