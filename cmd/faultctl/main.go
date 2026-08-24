@@ -67,9 +67,9 @@ func run() error {
 				return fmt.Errorf("step %d (set_config): %w", i+1, err)
 			}
 		case "reset":
-			if err := resetConfig(client, *demoNamespace, step); err != nil {
-				return fmt.Errorf("step %d (reset): %w", i+1, err)
-			}
+			retryCleanup(fmt.Sprintf("step %d (reset)", i+1), func() error {
+				return resetConfig(client, *demoNamespace, step)
+			})
 		case "wait":
 			d, err := time.ParseDuration(step.Duration)
 			if err != nil {
@@ -103,9 +103,9 @@ func run() error {
 					return fmt.Errorf("step %d (reset_cpu_limit): %w", i+1, err)
 				}
 			}
-			if err := resetCPULimit(ctx, k8sClient, *demoNamespace, step, originalCPULimit); err != nil {
-				return fmt.Errorf("step %d (reset_cpu_limit): %w", i+1, err)
-			}
+			retryCleanup(fmt.Sprintf("step %d (reset_cpu_limit)", i+1), func() error {
+				return resetCPULimit(ctx, k8sClient, *demoNamespace, step, originalCPULimit)
+			})
 		default:
 			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
 		}
@@ -235,6 +235,27 @@ func sustainFault(client *http.Client, namespace string, step scenario.Step) err
 		}
 		time.Sleep(interval)
 	}
+}
+
+// retryCleanup runs a cleanup step (reset / reset_cpu_limit) with a
+// few retries, but never fails the run — cleanup steps can race a
+// pod that's mid-restart from the fault that just ran (case #6 found
+// this for real: reset_cpu_limit's own patch triggers another
+// rollout, and the immediately-following reset raced it and got
+// "context deadline exceeded"). Treating that as fatal aborted run()
+// before ground truth ever got saved, even though the actual fault
+// injection had already succeeded — losing an entire scenario run
+// over a cleanup timing issue unrelated to the experiment's validity.
+func retryCleanup(label string, fn func() error) {
+	const attempts = 3
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = fn(); err == nil {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Printf("warning: %s failed after %d attempts, continuing anyway: %v\n", label, attempts, err)
 }
 
 func newK8sClient() (*kubernetes.Clientset, error) {
