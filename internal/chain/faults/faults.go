@@ -115,8 +115,17 @@ func (c *Controller) Apply(ctx context.Context, route string) error {
 	}
 
 	if spec.MemLeak {
+		// 8MiB/call, not 1MiB: at 1MiB/call against a 64Mi limit under
+		// 20rps background traffic, live testing showed the climb to
+		// OOM taking ~300s (Go's GC fights hard for the tiny 200m CPU
+		// budget as heap nears the limit, throttling effective request
+		// throughput far below 20rps) — too slow to fit more than one
+		// OOM cycle inside a practical scenario window, so case #5 only
+		// ever produced a single brief blip instead of a real
+		// CrashLoopBackOff. A bigger per-call leak reaches the limit in
+		// far fewer requests, before GC pressure has time to build up.
 		c.mu.Lock()
-		c.leaks = append(c.leaks, make([]byte, 1<<20)) // leak 1MiB per call
+		c.leaks = append(c.leaks, make([]byte, 8<<20))
 		c.mu.Unlock()
 	}
 
