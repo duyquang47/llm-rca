@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,6 +13,11 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/duyquang47/llm-rca/internal/groundtruth"
 	"github.com/duyquang47/llm-rca/internal/scenario"
@@ -42,6 +48,17 @@ func run() error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	startedAt := time.Now()
 
+	// Lazily built — most scenarios never touch the k8s API at all
+	// (everything goes through /_fault), so only construct a Clientset
+	// once a step actually needs one (case #6's CPU-limit patch).
+	var k8sClient *kubernetes.Clientset
+	// original CPU limits, keyed by Deployment name, so reset_cpu_limit
+	// can restore exactly what patch_cpu_limit overwrote without the
+	// scenario YAML needing to hardcode a value that could drift from
+	// deploy/demo/*.yaml.
+	originalCPULimit := map[string]string{}
+	ctx := context.Background()
+
 	for i, step := range sc.Steps {
 		fmt.Printf("[%s] step %d: action=%s target=%s\n", sc.Name, i+1, step.Action, step.Target)
 		switch step.Action {
@@ -66,6 +83,28 @@ func run() error {
 		case "sustain_fault":
 			if err := sustainFault(client, *demoNamespace, step); err != nil {
 				return fmt.Errorf("step %d (sustain_fault): %w", i+1, err)
+			}
+		case "patch_cpu_limit":
+			if k8sClient == nil {
+				var err error
+				k8sClient, err = newK8sClient()
+				if err != nil {
+					return fmt.Errorf("step %d (patch_cpu_limit): %w", i+1, err)
+				}
+			}
+			if err := patchCPULimit(ctx, k8sClient, *demoNamespace, step, originalCPULimit); err != nil {
+				return fmt.Errorf("step %d (patch_cpu_limit): %w", i+1, err)
+			}
+		case "reset_cpu_limit":
+			if k8sClient == nil {
+				var err error
+				k8sClient, err = newK8sClient()
+				if err != nil {
+					return fmt.Errorf("step %d (reset_cpu_limit): %w", i+1, err)
+				}
+			}
+			if err := resetCPULimit(ctx, k8sClient, *demoNamespace, step, originalCPULimit); err != nil {
+				return fmt.Errorf("step %d (reset_cpu_limit): %w", i+1, err)
 			}
 		default:
 			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
@@ -196,6 +235,78 @@ func sustainFault(client *http.Client, namespace string, step scenario.Step) err
 		}
 		time.Sleep(interval)
 	}
+}
+
+func newK8sClient() (*kubernetes.Clientset, error) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("in-cluster config: %w", err)
+	}
+	return kubernetes.NewForConfig(cfg)
+}
+
+// patchCPULimit and resetCPULimit exist for case #6 (CPU throttling):
+// unlike every other fault, this one isn't reachable through /_fault —
+// it has to change the Deployment's actual resource limit, which
+// CLAUDE.md's own §2.4/§7 notes flags as a real isolation risk (the
+// resulting rollout generates ordinary k8s Events in namespace "demo"
+// that the chaos-namespace exclusion rule never touches, unlike
+// events from a pod faultctl itself owns). Nothing here sets any
+// custom label/annotation/message mentioning faultctl or chaos — the
+// Events k8s generates for a routine Deployment rollout (e.g.
+// "ScalingReplicaSet") look identical to a human-initiated change, and
+// the existing must_not_include assertion plus
+// assertions_test.go's isolation-shape tests are what actually verify
+// that, not this code.
+func patchCPULimit(ctx context.Context, client *kubernetes.Clientset, namespace string, step scenario.Step, original map[string]string) error {
+	millicores := paramInt(step.Params["millicores"], 0)
+	if millicores <= 0 {
+		return fmt.Errorf("patch_cpu_limit requires params.millicores > 0")
+	}
+
+	deploy, err := client.AppsV1().Deployments(namespace).Get(ctx, step.Target, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment %s: %w", step.Target, err)
+	}
+	containers := deploy.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		return fmt.Errorf("deployment %s has no containers", step.Target)
+	}
+	if current, ok := containers[0].Resources.Limits["cpu"]; ok {
+		original[step.Target] = current.String()
+	}
+
+	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":%q,"resources":{"limits":{"cpu":"%dm"}}}]}}}}`,
+		containers[0].Name, millicores)
+	_, err = client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
+	}
+	return nil
+}
+
+func resetCPULimit(ctx context.Context, client *kubernetes.Clientset, namespace string, step scenario.Step, original map[string]string) error {
+	orig, ok := original[step.Target]
+	if !ok {
+		return fmt.Errorf("no original cpu limit recorded for %s (patch_cpu_limit must run first)", step.Target)
+	}
+
+	deploy, err := client.AppsV1().Deployments(namespace).Get(ctx, step.Target, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment %s: %w", step.Target, err)
+	}
+	containers := deploy.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		return fmt.Errorf("deployment %s has no containers", step.Target)
+	}
+
+	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":%q,"resources":{"limits":{"cpu":%q}}}]}}}}`,
+		containers[0].Name, orig)
+	_, err = client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
+	}
+	return nil
 }
 
 func paramInt(v any, fallback int) int {

@@ -48,35 +48,56 @@ const p99LatencyByService = `histogram_quantile(0.99, sum(rate(http_server_reque
 // to a genuinely slow downstream call.
 const dbPoolWaitP99 = `histogram_quantile(0.99, sum(rate(db_pool_wait_seconds_bucket[5m])) by (le, exported_job))`
 
+// cpuThrottleRatio is case #6's dedicated signal — fraction of CFS
+// scheduling periods a container was throttled in, from cAdvisor
+// (CLAUDE.md §5.1's own acceptance check already confirms these are
+// scraped for namespace=demo; the metric was renamed upstream from
+// container_cpu_cfs_throttled_seconds_total to
+// _periods_total, corrected directly in CLAUDE.md). Grouped by pod,
+// not exported_job — this comes from kubelet/cAdvisor's own scrape
+// target, a completely different label scheme than otelhttp's
+// exported_job. Left as "pod" rather than resolved to a clean service
+// name (which would need an extra kube_pod_labels join): the LLM can
+// already recover "inventory" from every other piece of evidence in
+// the pack (exemplar traces, logs, dependency graph), and
+// MetricDeltaAssertion never checks Labels, only Name/PctDiff.
+const cpuThrottleRatio = `
+	sum(rate(container_cpu_cfs_throttled_periods_total{namespace="demo", container!=""}[5m])) by (pod)
+	/
+	sum(rate(container_cpu_cfs_periods_total{namespace="demo", container!=""}[5m])) by (pod)`
+
 type metricQuery struct {
-	name  string
-	query string
+	name        string
+	query       string
+	labelKey    string // Prometheus label to read the grouping value from
+	outputLabel string // key under which that value is stored in MetricDelta.Labels
 }
 
 var diffQueries = []metricQuery{
-	{name: "http_server_request_duration_p99_seconds", query: p99LatencyByService},
-	{name: "db_pool_wait_seconds_p99", query: dbPoolWaitP99},
+	{name: "http_server_request_duration_p99_seconds", query: p99LatencyByService, labelKey: "exported_job", outputLabel: "service"},
+	{name: "db_pool_wait_seconds_p99", query: dbPoolWaitP99, labelKey: "exported_job", outputLabel: "service"},
+	{name: "cpu_throttled_periods_ratio", query: cpuThrottleRatio, labelKey: "pod", outputLabel: "pod"},
 }
 
 func (s *Source) MetricDiffVsBaseline(ctx context.Context, w telemetry.Window) ([]contextpack.MetricDelta, error) {
 	var out []contextpack.MetricDelta
 	for _, mq := range diffQueries {
-		current, err := s.instantQuery(ctx, mq.query, w.To)
+		current, err := s.instantQuery(ctx, mq.query, w.To, mq.labelKey)
 		if err != nil {
 			return nil, fmt.Errorf("query current %s: %w", mq.name, err)
 		}
-		baseline, err := s.instantQuery(ctx, mq.query, w.To.Add(-24*time.Hour))
+		baseline, err := s.instantQuery(ctx, mq.query, w.To.Add(-24*time.Hour), mq.labelKey)
 		if err != nil {
 			return nil, fmt.Errorf("query baseline %s: %w", mq.name, err)
 		}
 
-		baselineByJob := map[string]float64{}
+		baselineByLabel := map[string]float64{}
 		for _, r := range baseline {
-			baselineByJob[r.job] = r.value
+			baselineByLabel[r.label] = r.value
 		}
 
 		for _, r := range current {
-			base := baselineByJob[r.job]
+			base := baselineByLabel[r.label]
 			pctDiff := 0.0
 			if base > 0 {
 				pctDiff = (r.value - base) / base * 100
@@ -85,7 +106,7 @@ func (s *Source) MetricDiffVsBaseline(ctx context.Context, w telemetry.Window) (
 			}
 			out = append(out, contextpack.MetricDelta{
 				Name:     mq.name,
-				Labels:   map[string]string{"service": r.job},
+				Labels:   map[string]string{mq.outputLabel: r.label},
 				Current:  r.value,
 				Baseline: base,
 				PctDiff:  pctDiff,
@@ -96,7 +117,7 @@ func (s *Source) MetricDiffVsBaseline(ctx context.Context, w telemetry.Window) (
 }
 
 type sample struct {
-	job   string
+	label string
 	value float64
 }
 
@@ -110,7 +131,7 @@ type promResponse struct {
 	} `json:"data"`
 }
 
-func (s *Source) instantQuery(ctx context.Context, query string, at time.Time) ([]sample, error) {
+func (s *Source) instantQuery(ctx context.Context, query string, at time.Time, labelKey string) ([]sample, error) {
 	u := s.baseURL + "/api/v1/query?" + url.Values{
 		"query": {query},
 		"time":  {strconv.FormatInt(at.Unix(), 10)},
@@ -153,7 +174,7 @@ func (s *Source) instantQuery(ctx context.Context, query string, at time.Time) (
 		if err != nil || math.IsNaN(val) {
 			continue
 		}
-		out = append(out, sample{job: r.Metric["exported_job"], value: val})
+		out = append(out, sample{label: r.Metric[labelKey], value: val})
 	}
 	return out, nil
 }

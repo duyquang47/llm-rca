@@ -33,6 +33,37 @@ func TestCheckPack_CatchesForbiddenStringLeak(t *testing.T) {
 	}
 }
 
+// TestCheckPack_DirectK8sPatchEventShapeDoesNotLeak is the dedicated
+// test CLAUDE.md §2.4/§7 calls for: a fault that patches a k8s
+// resource directly (case #6, CPU limit) instead of going through
+// /_fault triggers an ordinary Deployment rollout, which generates
+// real k8s Events in namespace "demo" — not excluded by the chaos-
+// namespace rule the way faultctl's own pod events are, and genuinely
+// indistinguishable from a human-initiated change since nothing here
+// sets a custom label/annotation/message. This locks in that the
+// actual Reason/Message text k8s generates for that rollout (verified
+// against real Deployment/ReplicaSet/kubelet event conventions, not
+// invented) doesn't itself contain anything must_not_include would
+// need to catch — if a future k8s version or patch strategy changed
+// what gets generated, this is the test that would need to notice.
+func TestCheckPack_DirectK8sPatchEventShapeDoesNotLeak(t *testing.T) {
+	pack := contextpack.ContextPack{
+		K8sContext: contextpack.K8sContext{
+			Events: []contextpack.K8sEvent{
+				{Namespace: "demo", Pod: "inventory-8f7d9c6b5-x7z2q", Reason: "ScalingReplicaSet", Message: "Scaled up replica set inventory-8f7d9c6b5 to 1 from 0"},
+				{Namespace: "demo", Pod: "inventory-8f7d9c6b5-x7z2q", Reason: "SuccessfulCreate", Message: "Created pod: inventory-8f7d9c6b5-x7z2q"},
+				{Namespace: "demo", Pod: "inventory-77fd4cb95f-m4nxm", Reason: "Killing", Message: "Stopping container app"},
+			},
+		},
+	}
+	a := ContextAssertions{MustNotInclude: []string{"fault", "inject", "chaos", "_fault"}}
+
+	violations := a.CheckPack(pack)
+	if len(violations) != 0 {
+		t.Fatalf("want a routine Deployment-rollout event shape to pass cleanly, got violations: %v", violations)
+	}
+}
+
 func TestCheckPack_CleanPackPasses(t *testing.T) {
 	pack := contextpack.ContextPack{
 		TokenEstimate: 500,
