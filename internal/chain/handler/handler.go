@@ -196,7 +196,7 @@ func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) erro
 		id = "1"
 	}
 
-	run := func() error {
+	run := func(roundTripCost time.Duration) error {
 		acquireStart := time.Now()
 		conn, err := pool.Acquire(ctx)
 		dbPoolWait.Record(ctx, time.Since(acquireStart).Seconds())
@@ -211,6 +211,17 @@ func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) erro
 		// comment below used to claim "span count balloons" while no
 		// span existed at all. This span is what makes that claim true.
 		spanCtx, span := dbTracer.Start(ctx, "pg.query")
+		if roundTripCost > 0 {
+			// Postgres is same-node loopback in this POC — a few hundred
+			// µs per query, nowhere near what makes a real N+1 pattern
+			// painful in production (per-round-trip network cost over a
+			// real network). Without standing in for that cost, N+1 is
+			// structurally present (visible via span count) but never
+			// pushes p99 over the alert threshold, so no incident would
+			// ever fire for it. Only applied to the repeated N+1 queries,
+			// not the first legitimate one.
+			time.Sleep(roundTripCost)
+		}
 		rows, err := conn.Query(spanCtx, db.Query, id)
 		if err != nil {
 			span.End()
@@ -222,7 +233,7 @@ func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) erro
 		return err
 	}
 
-	if err := run(); err != nil {
+	if err := run(0); err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
 
@@ -231,8 +242,9 @@ func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) erro
 		// instead of batching, so span count balloons — the signal
 		// case #4 relies on.
 		const simulatedRows = 5
+		const roundTripCost = 200 * time.Millisecond
 		for i := 0; i < simulatedRows; i++ {
-			if err := run(); err != nil {
+			if err := run(roundTripCost); err != nil {
 				return fmt.Errorf("n+1 query %d: %w", i, err)
 			}
 		}
