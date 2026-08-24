@@ -63,6 +63,10 @@ func run() error {
 			if err := burstLoad(client, step); err != nil {
 				return fmt.Errorf("step %d (burst_load): %w", i+1, err)
 			}
+		case "sustain_fault":
+			if err := sustainFault(client, *demoNamespace, step); err != nil {
+				return fmt.Errorf("step %d (sustain_fault): %w", i+1, err)
+			}
 		default:
 			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
 		}
@@ -166,6 +170,32 @@ func burstLoad(client *http.Client, step scenario.Step) error {
 	}
 	wg.Wait()
 	return nil
+}
+
+// sustainFault re-POSTs step.Params as the fault spec every few seconds
+// for step.Duration. CLAUDE.md §4.4 says fault state is in-memory and
+// reset on pod restart — for most scenarios that never matters because
+// nothing crashes the pod, but case #5 (OOMKill) needs the fault
+// re-applied after every restart or it only OOMs once instead of
+// producing a real CrashLoopBackOff. Re-POSTing on a fixed interval
+// achieves that without needing to watch pod restarts directly, and
+// errors are swallowed since the target is expected to be briefly
+// unreachable while it's crashing/restarting — that's not a failure of
+// this step, it's the scenario working as intended.
+func sustainFault(client *http.Client, namespace string, step scenario.Step) error {
+	d, err := time.ParseDuration(step.Duration)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", step.Duration, err)
+	}
+	const interval = 3 * time.Second
+	deadline := time.Now().Add(d)
+	for {
+		_ = setConfig(client, namespace, step)
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(interval)
+	}
 }
 
 func paramInt(v any, fallback int) int {

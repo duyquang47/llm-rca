@@ -83,6 +83,24 @@ func (a ContextAssertions) CheckPack(pack contextpack.ContextPack) []string {
 		}
 	}
 
+	if a.MustIncludeK8sEventMatching != "" {
+		re, err := regexp.Compile(a.MustIncludeK8sEventMatching)
+		if err != nil {
+			violations = append(violations, fmt.Sprintf("must_include_k8s_event_matching: invalid regexp %q: %v", a.MustIncludeK8sEventMatching, err))
+		} else {
+			found := false
+			for _, e := range pack.K8sContext.Events {
+				if re.MatchString(e.Reason) || re.MatchString(e.Message) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				violations = append(violations, fmt.Sprintf("must_include_k8s_event_matching: no k8s event matches %q", a.MustIncludeK8sEventMatching))
+			}
+		}
+	}
+
 	if len(a.MustNotInclude) > 0 {
 		raw, err := json.Marshal(pack)
 		if err != nil {

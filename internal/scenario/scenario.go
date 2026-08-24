@@ -73,6 +73,7 @@ type ContextAssertions struct {
 	MustIncludeLogTemplateMatching string                  `yaml:"must_include_log_template_matching"`
 	MustIncludeMetricDelta         []MetricDeltaAssertion  `yaml:"must_include_metric_delta"`
 	MustIncludeSpanRepeated        []SpanRepeatedAssertion `yaml:"must_include_span_repeated"`
+	MustIncludeK8sEventMatching    string                  `yaml:"must_include_k8s_event_matching"`
 	MustNotInclude                 []string                `yaml:"must_not_include"`
 	MaxTokens                      int                     `yaml:"max_tokens"`
 	MaxServicesIncluded            int                     `yaml:"max_services_included"`

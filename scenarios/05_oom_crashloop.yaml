@@ -1,0 +1,31 @@
+# Case #5 (CLAUDE.md §7): mem_leak + inventory's 64Mi limit (deliberately
+# low, see §4.5) — leak, not traffic, is the root cause. Fault state is
+# in-memory and resets on pod restart (§4.4), so a plain set_config would
+# only ever produce ONE OOMKill before the fresh pod comes back clean and
+# stays healthy — sustain_fault re-applies mem_leak every few seconds so
+# the new pod starts leaking again immediately, producing a real
+# CrashLoopBackOff instead of a single crash.
+name: oom_crashloop
+steps:
+  - target: inventory
+    action: sustain_fault
+    duration: 90s
+    params:
+      route: /check
+      mem_leak: true
+  - target: inventory
+    action: reset
+    params: {route: /check}
+
+ground_truth:
+  service: inventory
+  cause: oom_memory_leak
+  distractors: [traffic_spike, config_error]
+
+context_assertions:
+  must_include_service: [inventory]
+  must_rank_in_top3: inventory
+  must_include_k8s_event_matching: "(?i)OOMKill|BackOff"
+  must_not_include: ["fault", "inject", "chaos", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6
