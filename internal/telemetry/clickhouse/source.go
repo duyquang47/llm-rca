@@ -74,13 +74,26 @@ func (s *Source) TopErrorSpans(ctx context.Context, w telemetry.Window, limit in
 // cross a service boundary (a client span calling into a different
 // service's server span).
 func (s *Source) DependencyGraph(ctx context.Context, w telemetry.Window, hops int) (contextpack.Graph, error) {
+	// Both sides of the join must be time-bounded, not just child. This
+	// query joins otel_traces against itself on TraceId+ParentSpanId —
+	// without a Timestamp filter on parent too, ClickHouse has to hash
+	// the *entire* table (every row ever ingested, no matter how old)
+	// as the join's build side ("FillingRightJoinSide" in the query
+	// plan) for every single call. Found by ClickHouse OOMing
+	// repeatedly (up to 1.36 GiB in one allocation, against a 1Gi
+	// limit) on orchestrator's periodic dependency-graph refresh — the
+	// on-disk table was only 86 MiB across 2.28M rows at the time, so
+	// the unbounded join's in-memory working set was the actual cause,
+	// not overall data volume.
 	rows, err := s.conn.Query(ctx, `
 		SELECT DISTINCT parent.ServiceName AS from_svc, child.ServiceName AS to_svc
 		FROM otel_traces AS child
 		INNER JOIN otel_traces AS parent
 			ON child.TraceId = parent.TraceId AND child.ParentSpanId = parent.SpanId
-		WHERE child.Timestamp BETWEEN ? AND ? AND child.ServiceName != parent.ServiceName`,
-		w.From, w.To)
+		WHERE child.Timestamp BETWEEN ? AND ?
+		  AND parent.Timestamp BETWEEN ? AND ?
+		  AND child.ServiceName != parent.ServiceName`,
+		w.From, w.To, w.From, w.To)
 	if err != nil {
 		return contextpack.Graph{}, fmt.Errorf("query dependency graph: %w", err)
 	}
