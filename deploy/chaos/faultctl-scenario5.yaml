@@ -9,7 +9,7 @@ data:
     steps:
       - target: inventory
         action: sustain_fault
-        duration: 90s
+        duration: 300s
         params:
           route: /check
           mem_leak: true

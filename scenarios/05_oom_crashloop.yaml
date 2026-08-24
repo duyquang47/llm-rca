@@ -6,10 +6,16 @@
 # the new pod starts leaking again immediately, producing a real
 # CrashLoopBackOff instead of a single crash.
 name: oom_crashloop
+# Live testing showed one leak-to-OOM cycle takes ~125-150s even at
+# 8MiB/call — CPU throttling (200m limit) makes Go's GC fight hard as
+# heap nears the cgroup limit, cutting effective request throughput
+# well below the nominal 20rps. 90s only fit one OOM, too brief to
+# cross HighErrorRate's 30s sustained-window threshold. 5 minutes
+# comfortably fits 2+ cycles, producing a real CrashLoopBackOff.
 steps:
   - target: inventory
     action: sustain_fault
-    duration: 90s
+    duration: 300s
     params:
       route: /check
       mem_leak: true
