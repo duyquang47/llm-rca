@@ -291,7 +291,7 @@ func (s *Server) query(ctx context.Context, r *http.Request, db *config.DB) erro
 
 func (s *Server) callDownstream(ctx context.Context, inbound *http.Request, call config.Call) error {
 	var lastErr error
-	attempts := call.Retry + 1
+	attempts := s.faults.EffectiveRetry(call.Name, call.Retry) + 1
 
 	for attempt := 0; attempt < attempts; attempt++ {
 		callCtx, cancel := context.WithTimeout(ctx, call.Timeout)

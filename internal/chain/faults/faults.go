@@ -38,6 +38,7 @@ type Spec struct {
 	MemLeak  bool          `json:"mem_leak"`
 	PoolSize *int          `json:"pool_size,omitempty"`
 	NPlusOne *bool         `json:"n_plus_one,omitempty"`
+	Retry    *int          `json:"retry,omitempty"`
 }
 
 // StatusError carries the fault's configured HTTP status code so the
@@ -103,6 +104,19 @@ func (c *Controller) EffectiveNPlusOne(route string, configured bool) bool {
 		return configured
 	}
 	return *spec.NPlusOne
+}
+
+// EffectiveRetry applies the same override precedence as
+// EffectivePoolSize, for case #8 (retry storm). Keyed by the
+// downstream call's target name (e.g. "inventory"), not an HTTP
+// route path — same "route is really just an arbitrary fault-scope
+// key" overload routeKeyForDB already uses for pool_size.
+func (c *Controller) EffectiveRetry(callName string, configured int) int {
+	spec, ok := c.get(callName)
+	if !ok || spec.Retry == nil {
+		return configured
+	}
+	return *spec.Retry
 }
 
 // Apply probabilistically injects latency and/or an error for route,
