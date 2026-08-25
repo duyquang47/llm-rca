@@ -27,6 +27,13 @@ spec:
             - {name: CLICKHOUSE_DATABASE, value: "otel"}
             - {name: PROMETHEUS_URL, value: "http://kube-prometheus-stack-prometheus.observability:9090"}
             - {name: LISTEN_ADDR, value: ":8080"}
+            # Switched off gemini-3.6-flash's default after its free-tier
+            # quota (limit: 20) got exhausted from a day of repeated
+            # scenario runs. flash-lite variants carry a separate quota
+            # bucket and a more generous free allowance (~15 RPM / 1000
+            # RPD vs. flash's tighter limits) per Google's published
+            # free-tier rate limits.
+            - {name: GEMINI_MODEL, value: "gemini-2.5-flash-lite"}
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef: {name: llm-api-keys, key: gemini-api-key}
