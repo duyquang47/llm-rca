@@ -83,9 +83,18 @@ func run() error {
 		}
 	}()
 	go func() {
-		logger.Info("internal fault control listening", "addr", internalFaultAddr)
+		// Keep this message clear of "fault"/"inject"/"chaos" — it used
+		// to say "internal fault control listening" and got caught in
+		// the CLAUDE.md §2.4 isolation check for real: case #10's
+		// several pod restarts (each re-logging this on startup) pushed
+		// it into the top-N log templates for the first time, where it
+		// tripped must_not_include. Every service logs this on every
+		// restart, so this was a latent leak in every prior scenario
+		// too — it just hadn't been outcompeted for a template slot by
+		// louder noise until a quiet, restart-heavy incident like #10.
+		logger.Info("internal control endpoint listening", "addr", internalFaultAddr)
 		if err := internalServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("internal fault server error", "err", err)
+			logger.Error("internal control endpoint error", "err", err)
 		}
 	}()
 
