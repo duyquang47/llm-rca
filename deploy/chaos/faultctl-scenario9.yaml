@@ -12,7 +12,7 @@ data:
         params:
           replicas: 0
       - action: wait
-        duration: 60s
+        duration: 120s
       - target: notify-worker
         action: reset_scale
     ground_truth:

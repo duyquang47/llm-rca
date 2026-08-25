@@ -11,6 +11,12 @@
 # HighP99Latency nor HighErrorRate has anything to fire on here — no
 # burst_load needed either, since this alert only depends on replica
 # count staying at 0, not on request volume.
+#
+# 60s wasn't enough in live testing: the alert reached "pending" but
+# never "firing" before reset_scale cleared the condition again — the
+# rule's own `for: 30s` plus kube-state-metrics' own scrape interval
+# (~30s) eats meaningfully into the wait window. 120s gives a
+# comfortable margin.
 name: consumer_lag
 steps:
   - target: notify-worker
@@ -18,7 +24,7 @@ steps:
     params:
       replicas: 0
   - action: wait
-    duration: 60s
+    duration: 120s
   - target: notify-worker
     action: reset_scale
 
