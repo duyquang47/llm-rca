@@ -40,3 +40,20 @@ spec:
             service: "{{ $labels.exported_job }}"
           annotations:
             summary: "error ratio for {{ $labels.exported_job }} exceeded 10%"
+        # Added for case #9 (consumer lag): scaling notify-worker to 0
+        # produces zero HTTP-level symptom — order's publish to the
+        # Redis Stream is fire-and-forget (XADD succeeds whether or not
+        # any consumer exists), so the request stays 200 OK exactly as
+        # CLAUDE.md §7's own case #9 description says, and neither
+        # HighP99Latency nor HighErrorRate has anything to fire on.
+        # kube-state-metrics is already deployed and already tracks
+        # this — no new component needed, just a rule using it.
+        - alert: DeploymentUnavailable
+          expr: |
+            kube_deployment_status_replicas_available{namespace="demo"} == 0
+          for: 30s
+          labels:
+            severity: critical
+            service: "{{ $labels.deployment }}"
+          annotations:
+            summary: "{{ $labels.deployment }} has zero available replicas"
