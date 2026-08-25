@@ -64,6 +64,28 @@ func TestCheckPack_DirectK8sPatchEventShapeDoesNotLeak(t *testing.T) {
 	}
 }
 
+// TestCheckPack_MustIncludeServiceFallsBackToK8sEvents reproduces case
+// #7 (cache down): redis has no app-level spans/metrics/logs, so
+// servicesIn()'s exact-map-key lookups never see it — but the real
+// ScalingReplicaSet event's Pod/Message text does name it, and that's
+// what the LLM actually used to correctly identify it as root cause
+// in a live run. must_include_service must accept that as evidence.
+func TestCheckPack_MustIncludeServiceFallsBackToK8sEvents(t *testing.T) {
+	pack := contextpack.ContextPack{
+		K8sContext: contextpack.K8sContext{
+			Events: []contextpack.K8sEvent{
+				{Namespace: "demo", Pod: "redis-7cf6954586-v7wpz", Reason: "ScalingReplicaSet", Message: "Scaled down replica set redis-7cf6954586 from 1 to 0"},
+			},
+		},
+	}
+	a := ContextAssertions{MustIncludeService: []string{"redis"}}
+
+	violations := a.CheckPack(pack)
+	if len(violations) != 0 {
+		t.Fatalf("want redis recognized via the k8s event fallback, got violations: %v", violations)
+	}
+}
+
 func TestCheckPack_CleanPackPasses(t *testing.T) {
 	pack := contextpack.ContextPack{
 		TokenEstimate: 500,

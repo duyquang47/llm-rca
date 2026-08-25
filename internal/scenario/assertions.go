@@ -23,7 +23,7 @@ func (a ContextAssertions) CheckPack(pack contextpack.ContextPack) []string {
 	services := servicesIn(pack)
 
 	for _, want := range a.MustIncludeService {
-		if !services[want] {
+		if !services[want] && !mentionedInK8sEvents(pack, want) {
 			violations = append(violations, fmt.Sprintf("must_include_service: %q not found anywhere in the pack", want))
 		}
 	}
@@ -137,6 +137,25 @@ func (a ContextAssertions) RankInTop3(rankedServices []string) bool {
 			break
 		}
 		if svc == a.MustRankInTop3 {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionedInK8sEvents is a substring-based fallback for services
+// that only ever appear via k8s Events, never via traces/metrics/logs
+// — case #7 (cache down) found this for real: redis isn't a
+// chain-service instance (no spans, no otelhttp metrics), so
+// servicesIn()'s exact-map-key lookups never see it, but the LLM
+// correctly identified it as root cause straight from the
+// ScalingReplicaSet event's Pod name and Message text ("Scaled down
+// replica set redis-7cf6954586..."). Deliberately substring, not
+// exact-match like servicesIn()'s map: event Pod names always carry a
+// ReplicaSet/pod hash suffix, so an exact match would never fire.
+func mentionedInK8sEvents(pack contextpack.ContextPack, want string) bool {
+	for _, e := range pack.K8sContext.Events {
+		if strings.Contains(e.Pod, want) || strings.Contains(e.Message, want) {
 			return true
 		}
 	}

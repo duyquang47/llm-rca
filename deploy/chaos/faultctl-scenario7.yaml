@@ -19,12 +19,12 @@ data:
       - target: redis
         action: reset_scale
     ground_truth:
-      service: order
+      service: redis
       cause: cache_unavailable
       distractors: [traffic_spike, postgres_slow]
     context_assertions:
-      must_include_service: [order]
-      must_rank_in_top3: order
+      must_include_service: [redis, order]
+      must_rank_in_top3: redis
       must_include_log_template_matching: "(?i)cache get failed|connection refused|dial tcp"
       must_not_include: ["fault", "inject", "chaos", "_fault"]
       max_tokens: 8000

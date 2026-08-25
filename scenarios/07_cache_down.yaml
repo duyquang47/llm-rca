@@ -23,6 +23,16 @@
 # ~100% "cache get failed" from redis being down, and the real test is
 # whether the LLM weighs the qualitative log evidence over the
 # metric-only evidence correctly.
+#
+# ground_truth.service is "redis", not "order" — this was corrected
+# after a real live run: redis has no app-level spans/metrics, but the
+# LLM correctly cited the raw k8s ScalingReplicaSet event ("Scaled
+# down replica set redis-... from 1 to 0") as its top-ranked evidence,
+# which is a more precise answer than attributing the failure to
+# order (the caller). servicesIn() in assertions.go never scans
+# K8sContext.Events though — added mentionedInK8sEvents() as a
+# substring fallback so must_include_service: [redis] can actually
+# pass.
 name: cache_down
 steps:
   - target: redis
@@ -38,13 +48,13 @@ steps:
     action: reset_scale
 
 ground_truth:
-  service: order
+  service: redis
   cause: cache_unavailable
   distractors: [traffic_spike, postgres_slow]
 
 context_assertions:
-  must_include_service: [order]
-  must_rank_in_top3: order
+  must_include_service: [redis, order]
+  must_rank_in_top3: redis
   must_include_log_template_matching: "(?i)cache get failed|connection refused|dial tcp"
   must_not_include: ["fault", "inject", "chaos", "_fault"]
   max_tokens: 8000
