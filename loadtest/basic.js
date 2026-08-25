@@ -11,6 +11,13 @@
 // traffic-to-inventory volume essentially unchanged from before cache
 // hits could skip downstream at all; case #7 relies on scaling redis
 // to 0 (not on the ambient hit rate) for its signal.
+//
+// tags.name is required once the URL varies per request: k6 tags
+// metrics by full URL by default, so a random user_id in the query
+// string means every single request mints a brand-new metric series
+// inside k6 itself — found by k6 OOMKilling (128Mi limit) after about
+// 6.5 minutes once the randomization landed. Pinning the tag collapses
+// every request back onto one series regardless of the URL.
 import http from 'k6/http';
 
 export const options = {
@@ -28,5 +35,8 @@ export const options = {
 
 export default function () {
   const userID = Math.floor(Math.random() * 1000000) + 1;
-  http.get(`http://gateway.demo:8080/create?user_id=${userID}&id=1`, { timeout: '10s' });
+  http.get(`http://gateway.demo:8080/create?user_id=${userID}&id=1`, {
+    timeout: '10s',
+    tags: { name: 'create' },
+  });
 }
