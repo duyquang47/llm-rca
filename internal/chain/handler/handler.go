@@ -93,8 +93,13 @@ func (s *Server) handle(route config.Route) http.HandlerFunc {
 		}
 
 		if route.Cache != nil {
-			if err := s.cacheGet(ctx, r, route.Cache); err != nil {
+			hit, err := s.cacheGet(ctx, r, route.Cache)
+			if err != nil {
 				s.log.WarnContext(ctx, "cache get failed", "err", err)
+			}
+			if hit {
+				w.WriteHeader(http.StatusOK)
+				return
 			}
 		}
 
@@ -120,6 +125,10 @@ func (s *Server) handle(route config.Route) http.HandlerFunc {
 			}
 		}
 
+		if route.Cache != nil {
+			s.cacheSet(ctx, r, route.Cache)
+		}
+
 		w.WriteHeader(http.StatusOK)
 	}
 }
@@ -135,9 +144,36 @@ func (s *Server) redisClient(addr string) *redis.Client {
 	return cli
 }
 
-func (s *Server) cacheGet(ctx context.Context, r *http.Request, c *config.Cache) error {
+// cacheGet reports a real hit/miss distinction, not just an error —
+// case #7 (cache down) needs a genuine cache-aside short-circuit
+// (hit -> skip downstream entirely) to be possible at all, otherwise
+// disabling the cache changes nothing observable since downstream
+// already gets called on every request regardless. redis.Nil (key
+// simply not present) is a normal miss, not a failure; any other
+// error (connection refused, timeout) is also treated as a miss so a
+// cache outage fails open rather than blocking requests — it's
+// reported via the bool return so the caller can still log it.
+func (s *Server) cacheGet(ctx context.Context, r *http.Request, c *config.Cache) (hit bool, err error) {
 	key := substituteParams(c.Key, r)
-	return s.redisClient(c.Addr).Get(ctx, key).Err()
+	err = s.redisClient(c.Addr).Get(ctx, key).Err()
+	if err == nil {
+		return true, nil
+	}
+	if err == redis.Nil {
+		return false, nil
+	}
+	return false, err
+}
+
+// cacheSet warms the cache after a request completes downstream work,
+// so a *later* request for the same key can actually hit and skip
+// downstream — without this, cacheGet would never see anything but
+// misses and the hit-skip path in handle() would be dead code.
+func (s *Server) cacheSet(ctx context.Context, r *http.Request, c *config.Cache) {
+	key := substituteParams(c.Key, r)
+	if err := s.redisClient(c.Addr).Set(ctx, key, "1", c.TTL).Err(); err != nil {
+		s.log.WarnContext(ctx, "cache set failed", "err", err)
+	}
 }
 
 // dbPool returns a connection pool sized by the fault-effective pool_size

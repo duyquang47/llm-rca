@@ -57,6 +57,7 @@ func run() error {
 	// scenario YAML needing to hardcode a value that could drift from
 	// deploy/demo/*.yaml.
 	originalCPULimit := map[string]string{}
+	originalReplicas := map[string]int32{}
 	ctx := context.Background()
 
 	for i, step := range sc.Steps {
@@ -105,6 +106,28 @@ func run() error {
 			}
 			retryCleanup(fmt.Sprintf("step %d (reset_cpu_limit)", i+1), func() error {
 				return resetCPULimit(ctx, k8sClient, *demoNamespace, step, originalCPULimit)
+			})
+		case "scale_deployment":
+			if k8sClient == nil {
+				var err error
+				k8sClient, err = newK8sClient()
+				if err != nil {
+					return fmt.Errorf("step %d (scale_deployment): %w", i+1, err)
+				}
+			}
+			if err := scaleDeployment(ctx, k8sClient, *demoNamespace, step, originalReplicas); err != nil {
+				return fmt.Errorf("step %d (scale_deployment): %w", i+1, err)
+			}
+		case "reset_scale":
+			if k8sClient == nil {
+				var err error
+				k8sClient, err = newK8sClient()
+				if err != nil {
+					return fmt.Errorf("step %d (reset_scale): %w", i+1, err)
+				}
+			}
+			retryCleanup(fmt.Sprintf("step %d (reset_scale)", i+1), func() error {
+				return resetScale(ctx, k8sClient, *demoNamespace, step, originalReplicas)
 			})
 		default:
 			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
@@ -325,6 +348,46 @@ func resetCPULimit(ctx context.Context, client *kubernetes.Clientset, namespace 
 		containers[0].Name, orig)
 	_, err = client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
+		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
+	}
+	return nil
+}
+
+// scaleDeployment and resetScale exist for case #7 (cache down): redis
+// isn't a chain-service instance and has no /_fault endpoint, so
+// taking it down means scaling its Deployment to 0 directly — same
+// class of fault as patch_cpu_limit (case #6), same isolation
+// reasoning applies (see patchCPULimit's doc comment).
+func scaleDeployment(ctx context.Context, client *kubernetes.Clientset, namespace string, step scenario.Step, original map[string]int32) error {
+	replicas := paramInt(step.Params["replicas"], -1)
+	if replicas < 0 {
+		return fmt.Errorf("scale_deployment requires params.replicas >= 0")
+	}
+
+	deploy, err := client.AppsV1().Deployments(namespace).Get(ctx, step.Target, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment %s: %w", step.Target, err)
+	}
+	if deploy.Spec.Replicas != nil {
+		original[step.Target] = *deploy.Spec.Replicas
+	} else {
+		original[step.Target] = 1
+	}
+
+	patch := fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas)
+	if _, err := client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
+	}
+	return nil
+}
+
+func resetScale(ctx context.Context, client *kubernetes.Clientset, namespace string, step scenario.Step, original map[string]int32) error {
+	orig, ok := original[step.Target]
+	if !ok {
+		return fmt.Errorf("no original replica count recorded for %s (scale_deployment must run first)", step.Target)
+	}
+	patch := fmt.Sprintf(`{"spec":{"replicas":%d}}`, orig)
+	if _, err := client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
 		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
 	}
 	return nil
