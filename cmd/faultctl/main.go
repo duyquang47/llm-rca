@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -155,6 +156,10 @@ func run() error {
 			retryCleanup(fmt.Sprintf("step %d (restore_env_var)", i+1), func() error {
 				return restoreEnvVar(ctx, k8sClient, *demoNamespace, step, originalEnvVars)
 			})
+		case "publish_poison_message":
+			if err := publishPoisonMessages(ctx, step); err != nil {
+				return fmt.Errorf("step %d (publish_poison_message): %w", i+1, err)
+			}
 		default:
 			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
 		}
@@ -483,6 +488,51 @@ func restoreEnvVar(ctx context.Context, client *kubernetes.Clientset, namespace 
 		containers[0].Name, key, val)
 	if _, err := client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
 		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
+	}
+	return nil
+}
+
+// publishPoisonMessages exists for case #10: order's own publish()
+// always writes a well-formed message (internal/chain/handler.go
+// always sets "published_at"), so a poison message has to be injected
+// directly via a redis client — no /_fault knob can reach this, since
+// it's not the demo services' own behavior that's misbehaving, it's
+// an externally-injected bad message.
+//
+// count > 1 matters: internal/chain/consumer.processEntry panics
+// (crashing the whole notify-worker process, undoing the read via
+// XReadGroup's "0" recovery, see the package doc) on a missing
+// "published_at" field, but a single crash's restart has no backoff
+// delay (only the *second+* restart does) — nowhere near enough
+// downtime to cross DeploymentUnavailable's for:30s threshold. Each
+// XReadGroup call fetches up to 10 entries at once and panics on the
+// first poison one in that batch, leaving the rest still pending for
+// the *next* restart to immediately re-hit — a large enough burst
+// keeps that restart-panic-restart cycle going long enough for the
+// growing crash-backoff delays to actually accumulate real downtime.
+func publishPoisonMessages(ctx context.Context, step scenario.Step) error {
+	addr, _ := step.Params["addr"].(string)
+	if addr == "" {
+		return fmt.Errorf("publish_poison_message requires params.addr")
+	}
+	streamName, _ := step.Params["stream"].(string)
+	if streamName == "" {
+		return fmt.Errorf("publish_poison_message requires params.stream")
+	}
+	count := paramInt(step.Params["count"], 1)
+
+	cli := redis.NewClient(&redis.Options{Addr: addr})
+	defer cli.Close()
+
+	for i := 0; i < count; i++ {
+		// Deliberately missing "published_at" — the exact field
+		// consumer.processEntry checks for.
+		if err := cli.XAdd(ctx, &redis.XAddArgs{
+			Stream: streamName,
+			Values: map[string]any{"malformed": "true"},
+		}).Err(); err != nil {
+			return fmt.Errorf("xadd poison message %d: %w", i, err)
+		}
 	}
 	return nil
 }
