@@ -32,8 +32,10 @@ spec:
             # scenario runs. flash-lite variants carry a separate quota
             # bucket and a more generous free allowance (~15 RPM / 1000
             # RPD vs. flash's tighter limits) per Google's published
-            # free-tier rate limits.
-            - {name: GEMINI_MODEL, value: "gemini-2.5-flash-lite"}
+            # free-tier rate limits. gemini-2.5-flash-lite itself 404'd
+            # ("no longer available to new users" — Google's API error
+            # pointed directly at the 3.5 replacement), so this is that.
+            - {name: GEMINI_MODEL, value: "gemini-3.5-flash-lite"}
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef: {name: llm-api-keys, key: gemini-api-key}
