@@ -58,6 +58,10 @@ func run() error {
 	// deploy/demo/*.yaml.
 	originalCPULimit := map[string]string{}
 	originalReplicas := map[string]int32{}
+	// original env var values, keyed by "<target>/<key>" (a Deployment
+	// can have multiple env vars removed across a scenario, unlike
+	// CPU limit/replicas which only ever have one active value).
+	originalEnvVars := map[string]string{}
 	ctx := context.Background()
 
 	for i, step := range sc.Steps {
@@ -128,6 +132,28 @@ func run() error {
 			}
 			retryCleanup(fmt.Sprintf("step %d (reset_scale)", i+1), func() error {
 				return resetScale(ctx, k8sClient, *demoNamespace, step, originalReplicas)
+			})
+		case "remove_env_var":
+			if k8sClient == nil {
+				var err error
+				k8sClient, err = newK8sClient()
+				if err != nil {
+					return fmt.Errorf("step %d (remove_env_var): %w", i+1, err)
+				}
+			}
+			if err := removeEnvVar(ctx, k8sClient, *demoNamespace, step, originalEnvVars); err != nil {
+				return fmt.Errorf("step %d (remove_env_var): %w", i+1, err)
+			}
+		case "restore_env_var":
+			if k8sClient == nil {
+				var err error
+				k8sClient, err = newK8sClient()
+				if err != nil {
+					return fmt.Errorf("step %d (restore_env_var): %w", i+1, err)
+				}
+			}
+			retryCleanup(fmt.Sprintf("step %d (restore_env_var)", i+1), func() error {
+				return restoreEnvVar(ctx, k8sClient, *demoNamespace, step, originalEnvVars)
 			})
 		default:
 			return fmt.Errorf("step %d: unknown action %q", i+1, step.Action)
@@ -387,6 +413,74 @@ func resetScale(ctx context.Context, client *kubernetes.Clientset, namespace str
 		return fmt.Errorf("no original replica count recorded for %s (scale_deployment must run first)", step.Target)
 	}
 	patch := fmt.Sprintf(`{"spec":{"replicas":%d}}`, orig)
+	if _, err := client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
+	}
+	return nil
+}
+
+// removeEnvVar and restoreEnvVar exist for case #12 (config error): a
+// required env var (CONFIG_PATH) removed from the Deployment's pod
+// template. Unlike case #5's mem_leak, this fault is persistent across
+// pod restarts on its own — it's baked into the Deployment spec, not
+// in-memory app state — so no sustain_fault trick is needed; the pod
+// just keeps CrashLoopBackOff-ing until restore_env_var runs.
+//
+// env's patchMergeKey is "name", so a strategic merge patch merges by
+// name rather than replacing the whole list — meaning removal needs
+// the explicit `"$patch":"delete"` directive (a plain patch would only
+// ever add/update entries, never remove one), while restoring is just
+// a normal named-entry patch.
+func removeEnvVar(ctx context.Context, client *kubernetes.Clientset, namespace string, step scenario.Step, original map[string]string) error {
+	key, _ := step.Params["key"].(string)
+	if key == "" {
+		return fmt.Errorf("remove_env_var requires params.key")
+	}
+
+	deploy, err := client.AppsV1().Deployments(namespace).Get(ctx, step.Target, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment %s: %w", step.Target, err)
+	}
+	containers := deploy.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		return fmt.Errorf("deployment %s has no containers", step.Target)
+	}
+	for _, e := range containers[0].Env {
+		if e.Name == key {
+			original[step.Target+"/"+key] = e.Value
+			break
+		}
+	}
+
+	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":%q,"env":[{"name":%q,"$patch":"delete"}]}]}}}}`,
+		containers[0].Name, key)
+	if _, err := client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
+	}
+	return nil
+}
+
+func restoreEnvVar(ctx context.Context, client *kubernetes.Clientset, namespace string, step scenario.Step, original map[string]string) error {
+	key, _ := step.Params["key"].(string)
+	if key == "" {
+		return fmt.Errorf("restore_env_var requires params.key")
+	}
+	val, ok := original[step.Target+"/"+key]
+	if !ok {
+		return fmt.Errorf("no original value recorded for %s/%s (remove_env_var must run first)", step.Target, key)
+	}
+
+	deploy, err := client.AppsV1().Deployments(namespace).Get(ctx, step.Target, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment %s: %w", step.Target, err)
+	}
+	containers := deploy.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		return fmt.Errorf("deployment %s has no containers", step.Target)
+	}
+
+	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":%q,"env":[{"name":%q,"value":%q}]}]}}}}`,
+		containers[0].Name, key, val)
 	if _, err := client.AppsV1().Deployments(namespace).Patch(ctx, step.Target, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
 		return fmt.Errorf("patch deployment %s: %w", step.Target, err)
 	}

@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scenario-12-config-error
+  namespace: chaos
+data:
+  scenario.yaml: |
+    name: config_error
+    steps:
+      - target: inventory
+        action: remove_env_var
+        params:
+          key: CONFIG_PATH
+      - action: wait
+        duration: 90s
+      - target: inventory
+        action: restore_env_var
+        params:
+          key: CONFIG_PATH
+    ground_truth:
+      service: inventory
+      cause: config_error
+      distractors: [oom_memory_leak, traffic_spike]
+    context_assertions:
+      must_include_service: [inventory, order]
+      must_rank_in_top3: inventory
+      must_include_k8s_event_matching: "(?i)BackOff"
+      must_not_include: ["fault", "inject", "chaos", "_fault"]
+      max_tokens: 8000
+      max_services_included: 6
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: faultctl-config-error
+  namespace: chaos
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: faultctl
+      containers:
+        - name: faultctl
+          image: faultctl:1.0
+          imagePullPolicy: IfNotPresent
+          securityContext: {runAsUser: 0}
+          args: ["-scenario=/etc/faultctl/scenario.yaml", "-demo-namespace=demo"]
+          env:
+            - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}
+          volumeMounts:
+            - {name: scenario, mountPath: /etc/faultctl}
+            - {name: ground-truth, mountPath: /var/lib/faultctl/ground-truth}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: scenario
+          configMap: {name: scenario-12-config-error}
+        - name: ground-truth
+          hostPath: {path: /var/lib/faultctl/ground-truth, type: DirectoryOrCreate}
