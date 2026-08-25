@@ -7,6 +7,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -274,7 +275,22 @@ func scanLogLines(rows driver.Rows) ([]telemetry.LogLine, error) {
 // cited "faultctl-timeout-cascade-..." running in namespace "chaos" as
 // the root cause. Keeping the filter here too means a future source
 // that isn't properly scoped doesn't silently leak again.
-func (s *Source) K8sEvents(ctx context.Context, w telemetry.Window) ([]contextpack.K8sEvent, error) {
+//
+// limit caps how many events come back. The underlying query fetches
+// one extra row ordered Warning-type first (BackOff/Failed/
+// NetworkNotReady/...) then most recent, so if there are more matches
+// than limit, the single lowest-priority row (Normal-type, oldest
+// among the candidates) is the one dropped and truncated comes back
+// true — found necessary running case #6 live: an unrelated cluster
+// hiccup (WSL resume mid-project) had every demo pod cycling through
+// routine Normal-type lifecycle events (Pulled/Started/Created/
+// Scheduled/...) right as the scenario ran, and this query previously
+// had no LIMIT at all, so 2228 events (almost all noise) landed in
+// the pack — 113,840 estimated tokens against an 8000 budget. A plain
+// chronological LIMIT would have just as easily cut the one Warning
+// event that actually mattered in favor of routine noise, so the
+// ordering matters as much as the cap.
+func (s *Source) K8sEvents(ctx context.Context, w telemetry.Window, limit int) (events []contextpack.K8sEvent, truncated bool, err error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT Timestamp,
 		       JSONExtractString(Body, 'namespace'),
@@ -286,9 +302,10 @@ func (s *Source) K8sEvents(ctx context.Context, w telemetry.Window) ([]contextpa
 		WHERE Timestamp BETWEEN ? AND ?
 		  AND Body LIKE '%involved_object_kind%'
 		  AND JSONExtractString(Body, 'namespace') = 'demo'
-		ORDER BY Timestamp`, w.From, w.To)
+		ORDER BY (JSONExtractString(Body, 'type') = 'Warning') DESC, Timestamp DESC
+		LIMIT ?`, w.From, w.To, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("query k8s events: %w", err)
+		return nil, false, fmt.Errorf("query k8s events: %w", err)
 	}
 	defer rows.Close()
 
@@ -297,12 +314,24 @@ func (s *Source) K8sEvents(ctx context.Context, w telemetry.Window) ([]contextpa
 		var e contextpack.K8sEvent
 		var count int64
 		if err := rows.Scan(&e.Timestamp, &e.Namespace, &e.Pod, &e.Reason, &e.Message, &count); err != nil {
-			return nil, fmt.Errorf("scan k8s event: %w", err)
+			return nil, false, fmt.Errorf("scan k8s event: %w", err)
 		}
 		e.Count = int32(count)
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(out) > limit {
+		out = out[:limit] // drop the lowest-priority row (last in DB order)
+		truncated = true
+	}
+	// The query ordered Warning-first to pick the right events under
+	// the cap; re-sort chronologically afterward so causal ordering
+	// (CLAUDE.md §6.8: first-seen-per-service is often the strongest
+	// signal in the pack) is preserved for whatever survived the cap.
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
+	return out, truncated, nil
 }
 
 // RecentChanges (deploy history) isn't implemented yet — nothing

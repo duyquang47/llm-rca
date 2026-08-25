@@ -14,7 +14,7 @@ type tracesLogsSource interface {
 	ExemplarTraces(ctx context.Context, w Window, n int) ([]contextpack.TraceDetail, error)
 	LogsForTraces(ctx context.Context, traceIDs []string) ([]LogLine, error)
 	LogsByService(ctx context.Context, w Window) ([]LogLine, error)
-	K8sEvents(ctx context.Context, w Window) ([]contextpack.K8sEvent, error)
+	K8sEvents(ctx context.Context, w Window, limit int) (events []contextpack.K8sEvent, truncated bool, err error)
 	RecentChanges(ctx context.Context, w Window) ([]ChangeRecord, error)
 }
 

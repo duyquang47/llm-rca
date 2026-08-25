@@ -32,6 +32,7 @@ const (
 	packVersion     = "v1"
 	maxLogTemplates = 10
 	maxExemplars    = 3
+	maxK8sEvents    = 50
 )
 
 func Build(ctx context.Context, source telemetry.Source, w telemetry.Window, alert contextpack.AlertSummary, incidentID string) (contextpack.ContextPack, error) {
@@ -67,9 +68,13 @@ func Build(ctx context.Context, source telemetry.Source, w telemetry.Window, ale
 		}
 	}
 
-	events, err := source.K8sEvents(ctx, w)
+	events, eventsTruncated, err := source.K8sEvents(ctx, w, maxK8sEvents)
 	if err != nil {
 		return contextpack.ContextPack{}, fmt.Errorf("k8s events: %w", err)
+	}
+	var truncated []string
+	if eventsTruncated {
+		truncated = append(truncated, "k8s_context.events")
 	}
 
 	templates := clusterLogs(logs)
@@ -84,6 +89,7 @@ func Build(ctx context.Context, source telemetry.Source, w telemetry.Window, ale
 		Exemplars:       exemplars,
 		LogTemplates:    templates,
 		K8sContext:      contextpack.K8sContext{Events: events},
+		Truncated:       truncated,
 	}
 
 	raw, err := json.Marshal(pack)

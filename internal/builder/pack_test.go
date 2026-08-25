@@ -19,6 +19,7 @@ type fakeSource struct {
 	exemplars   []contextpack.TraceDetail
 	logs        []telemetry.LogLine
 	events      []contextpack.K8sEvent
+	eventsTrunc bool
 }
 
 func (f *fakeSource) TopErrorSpans(context.Context, telemetry.Window, int) ([]telemetry.SpanAgg, error) {
@@ -39,8 +40,8 @@ func (f *fakeSource) LogsByService(context.Context, telemetry.Window) ([]telemet
 func (f *fakeSource) MetricDiffVsBaseline(context.Context, telemetry.Window) ([]contextpack.MetricDelta, error) {
 	return f.metricDiffs, nil
 }
-func (f *fakeSource) K8sEvents(context.Context, telemetry.Window) ([]contextpack.K8sEvent, error) {
-	return f.events, nil
+func (f *fakeSource) K8sEvents(context.Context, telemetry.Window, int) ([]contextpack.K8sEvent, bool, error) {
+	return f.events, f.eventsTrunc, nil
 }
 func (f *fakeSource) RecentChanges(context.Context, telemetry.Window) ([]telemetry.ChangeRecord, error) {
 	return nil, nil
@@ -155,5 +156,35 @@ func TestBuild_PreservesTargetDespiteTemplateMerging(t *testing.T) {
 	targets := pack.LogTemplates[0].Targets
 	if targets["thirdparty-mock"] != 1 || targets["payment"] != 1 {
 		t.Errorf("want both targets preserved in the aggregation despite template merging, got %v", targets)
+	}
+}
+
+// TestBuild_RecordsK8sEventTruncation reproduces the case #6 finding:
+// an unrelated cluster hiccup produced 2228 k8s events in one window
+// (almost all routine Normal-type noise), and K8sEvents had no LIMIT
+// at all, ballooning the pack to 113,840 estimated tokens against an
+// 8000 budget. The cap itself lives in clickhouse.Source's SQL (not
+// unit-testable without a live ClickHouse), but Build must correctly
+// propagate whatever the source reports into pack.Truncated so
+// evaluator/context_assertions can see a cap actually fired.
+func TestBuild_RecordsK8sEventTruncation(t *testing.T) {
+	src := &fakeSource{
+		events:      []contextpack.K8sEvent{{Reason: "BackOff"}},
+		eventsTrunc: true,
+	}
+
+	pack, err := Build(context.Background(), src, telemetry.Window{Service: "gateway"}, contextpack.AlertSummary{}, "incident-6")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	found := false
+	for _, tr := range pack.Truncated {
+		if tr == "k8s_context.events" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want pack.Truncated to record the k8s events cap, got %v", pack.Truncated)
 	}
 }

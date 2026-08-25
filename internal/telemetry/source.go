@@ -52,6 +52,6 @@ type Source interface {
 	LogsForTraces(ctx context.Context, traceIDs []string) ([]LogLine, error)
 	LogsByService(ctx context.Context, w Window) ([]LogLine, error)
 	MetricDiffVsBaseline(ctx context.Context, w Window) ([]contextpack.MetricDelta, error)
-	K8sEvents(ctx context.Context, w Window) ([]contextpack.K8sEvent, error)
+	K8sEvents(ctx context.Context, w Window, limit int) (events []contextpack.K8sEvent, truncated bool, err error)
 	RecentChanges(ctx context.Context, w Window) ([]ChangeRecord, error)
 }
