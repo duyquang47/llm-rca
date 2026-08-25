@@ -61,10 +61,23 @@ const dbPoolWaitP99 = `histogram_quantile(0.99, sum(rate(db_pool_wait_seconds_bu
 // already recover "inventory" from every other piece of evidence in
 // the pack (exemplar traces, logs, dependency graph), and
 // MetricDeltaAssertion never checks Labels, only Name/PctDiff.
+//
+// container="app" (not container!="") is deliberate, not a stray
+// filter — a case #1 regression run caught this the hard way:
+// postgres and redis are ALSO in namespace demo with their own
+// (unrelated) cAdvisor container names ("postgres", "redis"), and
+// postgres genuinely does get CPU-throttled under this project's tiny
+// resource budget independent of anything faultctl injects. Without
+// this filter, postgres showed 82% throttled periods during a case #1
+// run (pure inventory-latency fault, nothing CPU-related) and the LLM
+// picked "postgres (cpu_throttling)" as top cause — confidently wrong,
+// and not even one of case #1's own distractors. "app" is the
+// container name every chain-service Deployment uses (deploy/demo/
+// *.yaml), so this now only ever reflects the 6 actual services.
 const cpuThrottleRatio = `
-	sum(rate(container_cpu_cfs_throttled_periods_total{namespace="demo", container!=""}[5m])) by (pod)
+	sum(rate(container_cpu_cfs_throttled_periods_total{namespace="demo", container="app"}[5m])) by (pod)
 	/
-	sum(rate(container_cpu_cfs_periods_total{namespace="demo", container!=""}[5m])) by (pod)`
+	sum(rate(container_cpu_cfs_periods_total{namespace="demo", container="app"}[5m])) by (pod)`
 
 type metricQuery struct {
 	name        string
