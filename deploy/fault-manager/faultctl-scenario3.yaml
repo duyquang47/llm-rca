@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scenario-3-db-pool-exhaustion
+  namespace: fault-manager
+data:
+  scenario.yaml: |
+    name: db_pool_exhaustion
+    steps:
+      - target: inventory
+        action: set_config
+        params:
+          route: db
+          pool_size: 2
+      - action: burst_load
+        duration: 60s
+        params:
+          url: "http://gateway.demo:8080/create?user_id=1&id=1"
+          concurrency: 30
+      - target: inventory
+        action: reset
+        params: {route: db}
+    ground_truth:
+      service: inventory
+      cause: connection_pool_exhausted
+      distractors: [postgres_slow, traffic_spike]
+    context_assertions:
+      must_include_service: [inventory, order]
+      must_rank_in_top3: inventory
+      must_include_metric_delta:
+        - {name_matches: "db_pool_wait", min_pct_diff: 100}
+      must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+      max_tokens: 8000
+      max_services_included: 6
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: faultctl-db-pool-exhaustion
+  namespace: fault-manager
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: faultctl
+          image: docker.io/quang47/llm-rca-faultctl:v1.0
+          imagePullPolicy: Always
+          securityContext: {runAsUser: 0}
+          args: ["-scenario=/etc/faultctl/scenario.yaml", "-demo-namespace=demo"]
+          env:
+            - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}
+          volumeMounts:
+            - {name: scenario, mountPath: /etc/faultctl}
+            - {name: ground-truth, mountPath: /var/lib/faultctl/ground-truth}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: scenario
+          configMap: {name: scenario-3-db-pool-exhaustion}
+        - name: ground-truth
+          persistentVolumeClaim: {claimName: ground-truth-pvc}

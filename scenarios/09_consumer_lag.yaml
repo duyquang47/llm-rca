@@ -36,6 +36,6 @@ ground_truth:
 context_assertions:
   must_include_service: [notify-worker]
   must_rank_in_top3: notify-worker
-  must_not_include: ["fault", "inject", "chaos", "_fault"]
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
   max_tokens: 8000
   max_services_included: 6

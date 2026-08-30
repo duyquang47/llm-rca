@@ -48,10 +48,9 @@ data:
       otlp:
         protocols:
           grpc: {endpoint: 0.0.0.0:4317}
-      # cmd/eventwatcher dumps k8s Events to this hostPath file (same
-      # node — single-node cluster) and we tail it here. See
-      # eventwatcher.yaml for why it's a custom binary, not
-      # kubernetes-event-exporter.
+      # kubernetes-event-exporter dumps k8s Events to this file (shared
+      # PersistentVolumeClaim, see event-exporter.yaml + k8s-events-pvc.yaml)
+      # and we tail it here.
       filelog:
         include: ["/var/log/k8s-events/events.log"]
         start_at: beginning
@@ -112,7 +111,7 @@ spec:
         - name: cfg
           configMap: {name: otel-collector-config}
         - name: events
-          hostPath: {path: /var/log/k8s-events, type: DirectoryOrCreate}
+          persistentVolumeClaim: {claimName: k8s-events-pvc}
 ---
 apiVersion: v1
 kind: Service

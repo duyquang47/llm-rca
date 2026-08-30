@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scenario-6-cpu-throttling
+  namespace: fault-manager
+data:
+  scenario.yaml: |
+    name: cpu_throttling
+    steps:
+      - target: inventory
+        action: patch_cpu_limit
+        params:
+          millicores: 100
+      - target: inventory
+        action: sustain_fault
+        duration: 90s
+        params:
+          route: /check
+          cpu_burn: true
+      - target: inventory
+        action: reset_cpu_limit
+      - target: inventory
+        action: reset
+        params: {route: /check}
+    ground_truth:
+      service: inventory
+      cause: cpu_throttling
+      distractors: [code_slow, traffic_spike]
+    context_assertions:
+      must_include_service: [inventory]
+      must_rank_in_top3: inventory
+      must_include_metric_delta:
+        - {name_matches: "cpu_throttled_periods_ratio", min_pct_diff: 100}
+      must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+      max_tokens: 8000
+      max_services_included: 6
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: faultctl-cpu-throttling
+  namespace: fault-manager
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: faultctl
+      containers:
+        - name: faultctl
+          image: docker.io/quang47/llm-rca-faultctl:v1.0
+          imagePullPolicy: Always
+          securityContext: {runAsUser: 0}
+          args: ["-scenario=/etc/faultctl/scenario.yaml", "-demo-namespace=demo"]
+          env:
+            - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}
+          volumeMounts:
+            - {name: scenario, mountPath: /etc/faultctl}
+            - {name: ground-truth, mountPath: /var/lib/faultctl/ground-truth}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: scenario
+          configMap: {name: scenario-6-cpu-throttling}
+        - name: ground-truth
+          persistentVolumeClaim: {claimName: ground-truth-pvc}

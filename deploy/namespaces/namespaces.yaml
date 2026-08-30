@@ -1,6 +1,8 @@
-# Four namespaces per CLAUDE.md §2. `chaos` is kept isolated from
-# scrape/log pipelines at the NetworkPolicy/collector-config layer, not
-# here — see deploy/networkpolicy/.
+# Three namespaces (originally four per CLAUDE.md §2 — `rca` was later
+# merged into `observability`, see MIGRATE_CLOUD.md). `fault-manager`
+# is kept isolated from scrape/log pipelines at the
+# NetworkPolicy/collector-config layer, not here — see
+# deploy/networkpolicy/.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -14,9 +16,4 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: rca
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: chaos
+  name: fault-manager

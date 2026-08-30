@@ -1,0 +1,35 @@
+# ServiceAccount for faultctl Jobs that need to patch a k8s resource
+# directly instead of going through /_fault — case #6 (CPU limit) is
+# the first, and later cases (#9 scale-to-zero, #12 config removal)
+# will likely reuse this same ServiceAccount/Role rather than each
+# needing their own. Scoped to patch/get on Deployments in "demo"
+# only — not events, not other namespaces, not delete.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: faultctl
+  namespace: fault-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: faultctl-patch-demo-deployments
+  namespace: demo
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: faultctl-patch-demo-deployments
+  namespace: demo
+subjects:
+  - kind: ServiceAccount
+    name: faultctl
+    namespace: fault-manager
+roleRef:
+  kind: Role
+  name: faultctl-patch-demo-deployments
+  apiGroup: rbac.authorization.k8s.io

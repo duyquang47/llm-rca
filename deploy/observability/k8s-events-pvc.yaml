@@ -1,0 +1,17 @@
+# Replaces the hostPath /var/log/k8s-events dir that used to assume
+# event-exporter and otel-collector always land on the same node
+# (true on the old single-node k3s cluster, not on this 4-node one).
+# local-path is WaitForFirstConsumer and pins the PV's nodeAffinity to
+# whichever node first binds it, so the scheduler forces both
+# Deployments referencing this same claim onto that one node without
+# any manual nodeSelector — see MIGRATE_CLOUD.md mục 1.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: k8s-events-pvc
+  namespace: observability
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 1Gi}

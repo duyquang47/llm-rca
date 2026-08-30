@@ -1,13 +1,18 @@
 # incident-orchestrator per CLAUDE.md §6.1. GEMINI_API_KEY comes from
 # a Secret created out-of-band (kubectl create secret ... — never
 # commit the key itself):
-#   kubectl create secret generic llm-api-keys -n rca \
+#   kubectl create secret generic llm-api-keys -n observability \
 #     --from-literal=gemini-api-key=<key>
+#
+# Deployed into the observability namespace (rca was merged into it —
+# orchestrator has no k8s RBAC needs of its own, only talks to
+# ClickHouse/Prometheus over HTTP + the Gemini API, so there was no
+# isolation reason to keep it in a separate namespace).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: orchestrator
-  namespace: rca
+  namespace: observability
 spec:
   replicas: 1
   selector:
@@ -18,8 +23,8 @@ spec:
     spec:
       containers:
         - name: orchestrator
-          image: orchestrator:1.0
-          imagePullPolicy: IfNotPresent
+          image: docker.io/quang47/llm-rca-orchestrator:v1.0
+          imagePullPolicy: Always
           env:
             - {name: CLICKHOUSE_ADDR, value: "clickhouse.observability:9000"}
             - {name: CLICKHOUSE_USER, value: "otel"}
@@ -49,7 +54,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: orchestrator
-  namespace: rca
+  namespace: observability
 spec:
   selector: {app: orchestrator}
   ports:

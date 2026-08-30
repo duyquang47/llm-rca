@@ -1,0 +1,37 @@
+# One-shot Job scoring the most recent timeout_cascade run: top-1/MRR
+# against ground truth, plus context_assertions (evidence recall +
+# the must_not_include isolation check) against the stored pack.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: evaluator-timeout-cascade
+  namespace: fault-manager
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: evaluator
+          image: docker.io/quang47/llm-rca-evaluator:v1.0
+          imagePullPolicy: Always
+          args:
+            - "-scenario=timeout_cascade"
+            - "-scenario-file=/etc/faultctl/scenario.yaml"
+          env:
+            - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}
+            - {name: CLICKHOUSE_ADDR, value: "clickhouse.observability:9000"}
+            - {name: CLICKHOUSE_USER, value: "otel"}
+            - {name: CLICKHOUSE_PASSWORD, value: "otel"}
+            - {name: CLICKHOUSE_DATABASE, value: "otel"}
+          volumeMounts:
+            - {name: scenario, mountPath: /etc/faultctl}
+            - {name: ground-truth, mountPath: /var/lib/faultctl/ground-truth}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: scenario
+          configMap: {name: scenario-01-timeout-cascade}
+        - name: ground-truth
+          persistentVolumeClaim: {claimName: ground-truth-pvc}

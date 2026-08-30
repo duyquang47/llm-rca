@@ -33,6 +33,6 @@ context_assertions:
   must_include_service: [notify-worker]
   must_rank_in_top3: notify-worker
   must_include_k8s_event_matching: "(?i)BackOff"
-  must_not_include: ["fault", "inject", "chaos", "_fault"]
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
   max_tokens: 8000
   max_services_included: 6

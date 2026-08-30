@@ -268,11 +268,11 @@ func scanLogLines(rows driver.Rows) ([]telemetry.LogLine, error) {
 //
 // The namespace='demo' filter is defense-in-depth, not the only
 // safeguard: eventwatcher itself is scoped to WATCH_NAMESPACE=demo
-// (see cmd/eventwatcher), so chaos/rca/observability events shouldn't
+// (see cmd/eventwatcher), so fault-manager/observability events shouldn't
 // reach otel_logs at all. This query filtered nothing before that fix
-// and a real scenario run leaked a chaos-namespace pod's own
+// and a real scenario run leaked a fault-manager-namespace pod's own
 // Scheduled/Started events straight into the LLM's evidence — it
-// cited "faultctl-timeout-cascade-..." running in namespace "chaos" as
+// cited "faultctl-timeout-cascade-..." running in namespace "fault-manager" as
 // the root cause. Keeping the filter here too means a future source
 // that isn't properly scoped doesn't silently leak again.
 //

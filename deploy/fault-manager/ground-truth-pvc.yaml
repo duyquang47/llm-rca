@@ -1,0 +1,18 @@
+# Replaces the hostPath /var/lib/faultctl/ground-truth dir shared by
+# every faultctl (writer) / evaluator (reader) Job pair. Scenarios run
+# sequentially, never concurrently, so RWO is enough — same
+# node-pinning reasoning as deploy/observability/k8s-events-pvc.yaml:
+# local-path's WaitForFirstConsumer binding forces every later Job's
+# pod onto whichever node first claimed this PVC, so faultctl and
+# evaluator always land together even across a 4-node cluster. See
+# MIGRATE_CLOUD.md mục 1.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ground-truth-pvc
+  namespace: fault-manager
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 1Gi}

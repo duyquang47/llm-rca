@@ -1,9 +1,9 @@
 # Case #6 (CLAUDE.md §7): CPU limit patched directly on the Deployment
 # (100m, not the usual 200m) rather than through /_fault — this fault
 # has no /_fault equivalent, so it uses patch_cpu_limit/reset_cpu_limit
-# (k8s API, RBAC in deploy/chaos/rbac.yaml). CLAUDE.md §2.4/§7 flags
+# (k8s API, RBAC in deploy/fault-manager/rbac.yaml). CLAUDE.md §2.4/§7 flags
 # this class of fault as a real isolation risk: the resulting rollout
-# generates ordinary k8s Events in namespace "demo" that the chaos-
+# generates ordinary k8s Events in namespace "demo" that the fault-manager-
 # namespace exclusion never touches — see
 # internal/scenario/assertions_test.go's
 # TestCheckPack_DirectK8sPatchEventShapeDoesNotLeak for the dedicated
@@ -54,6 +54,6 @@ context_assertions:
   must_rank_in_top3: inventory
   must_include_metric_delta:
     - {name_matches: "cpu_throttled_periods_ratio", min_pct_diff: 100}
-  must_not_include: ["fault", "inject", "chaos", "_fault"]
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
   max_tokens: 8000
   max_services_included: 6

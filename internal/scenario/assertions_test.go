@@ -14,15 +14,15 @@ func TestCheckPack_CatchesForbiddenStringLeak(t *testing.T) {
 	pack := contextpack.ContextPack{
 		K8sContext: contextpack.K8sContext{
 			Events: []contextpack.K8sEvent{
-				{Namespace: "chaos", Pod: "faultctl-timeout-cascade-nhmv7", Reason: "Scheduled"},
+				{Namespace: "fault-manager", Pod: "faultctl-timeout-cascade-nhmv7", Reason: "Scheduled"},
 			},
 		},
 	}
-	a := ContextAssertions{MustNotInclude: []string{"fault", "inject", "chaos", "_fault"}}
+	a := ContextAssertions{MustNotInclude: []string{"fault", "inject", "fault-manager", "_fault"}}
 
 	violations := a.CheckPack(pack)
 	if len(violations) == 0 {
-		t.Fatal("want a violation for the leaked chaos-namespace event, got none")
+		t.Fatal("want a violation for the leaked fault-manager-namespace event, got none")
 	}
 	// "fault" matches first since "faultctl" contains it as a
 	// substring — any of the forbidden keywords firing is the point,
@@ -37,7 +37,7 @@ func TestCheckPack_CatchesForbiddenStringLeak(t *testing.T) {
 // test CLAUDE.md §2.4/§7 calls for: a fault that patches a k8s
 // resource directly (case #6, CPU limit) instead of going through
 // /_fault triggers an ordinary Deployment rollout, which generates
-// real k8s Events in namespace "demo" — not excluded by the chaos-
+// real k8s Events in namespace "demo" — not excluded by the fault-manager-
 // namespace rule the way faultctl's own pod events are, and genuinely
 // indistinguishable from a human-initiated change since nothing here
 // sets a custom label/annotation/message. This locks in that the
@@ -56,7 +56,7 @@ func TestCheckPack_DirectK8sPatchEventShapeDoesNotLeak(t *testing.T) {
 			},
 		},
 	}
-	a := ContextAssertions{MustNotInclude: []string{"fault", "inject", "chaos", "_fault"}}
+	a := ContextAssertions{MustNotInclude: []string{"fault", "inject", "fault-manager", "_fault"}}
 
 	violations := a.CheckPack(pack)
 	if len(violations) != 0 {
@@ -104,7 +104,7 @@ func TestCheckPack_CleanPackPasses(t *testing.T) {
 		MustIncludeService:             []string{"inventory", "order", "gateway"},
 		MustIncludeLogTemplateMatching: "(?i)downstream call failed|timeout",
 		MustIncludeMetricDelta:         []MetricDeltaAssertion{{NameMatches: "http_server_request_duration", MinPctDiff: 50}},
-		MustNotInclude:                 []string{"fault", "inject", "chaos", "_fault"},
+		MustNotInclude:                 []string{"fault", "inject", "fault-manager", "_fault"},
 		MaxTokens:                      8000,
 		MaxServicesIncluded:            6,
 	}

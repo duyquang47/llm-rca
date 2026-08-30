@@ -34,7 +34,16 @@ alertmanager:
         # would otherwise fall through to the null receiver just like
         # any other new SLO rule added later without remembering to
         # update this route too.
-        - matchers: [service =~ ".+"]
+        #
+        # namespace=demo added when migrating to a real shared cluster:
+        # without it, this route also caught the cluster's own
+        # kube-system infra alerts (etcdInsufficientMembers,
+        # TargetDown for kube-scheduler/kube-controller-manager — they
+        # carry a `service` label too), sending them to orchestrator
+        # and burning Gemini quota on incidents the LLM had no real
+        # context for. Didn't show up on the old single-tenant local
+        # k3s cluster, which had no other alertable workloads.
+        - matchers: [service =~ ".+", namespace = "demo"]
           receiver: orchestrator-webhook
           group_wait: 10s
           group_interval: 1m
@@ -43,5 +52,5 @@ alertmanager:
       - name: "null"
       - name: orchestrator-webhook
         webhook_configs:
-          - url: "http://orchestrator.rca.svc.cluster.local:8080/webhook"
+          - url: "http://orchestrator.observability.svc.cluster.local:8080/webhook"
             send_resolved: false

@@ -25,8 +25,8 @@ spec:
     spec:
       containers:
         - name: app
-          image: chain-service:1.0
-          imagePullPolicy: IfNotPresent
+          image: docker.io/quang47/llm-rca-chain-service:v1.0
+          imagePullPolicy: Always
           env:
             - {name: CONFIG_PATH, value: /etc/chain/config.yaml}
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.observability:4317"}

@@ -325,9 +325,9 @@ func newK8sClient() (*kubernetes.Clientset, error) {
 // it has to change the Deployment's actual resource limit, which
 // CLAUDE.md's own §2.4/§7 notes flags as a real isolation risk (the
 // resulting rollout generates ordinary k8s Events in namespace "demo"
-// that the chaos-namespace exclusion rule never touches, unlike
+// that the fault-manager-namespace exclusion rule never touches, unlike
 // events from a pod faultctl itself owns). Nothing here sets any
-// custom label/annotation/message mentioning faultctl or chaos — the
+// custom label/annotation/message mentioning faultctl or fault-manager — the
 // Events k8s generates for a routine Deployment rollout (e.g.
 // "ScalingReplicaSet") look identical to a human-initiated change, and
 // the existing must_not_include assertion plus

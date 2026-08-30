@@ -29,15 +29,20 @@ kube-state-metrics:
     requests: {cpu: 20m, memory: 32Mi}
     limits: {cpu: 50m, memory: 64Mi}
 
-# Disabled: node-exporter's host-rootfs mount hits a WSL2-specific
-# limitation ("path / ... not a shared or slave mount") — a runc/WSL2
-# mount-propagation issue, not something fixable via chart config. Not
-# required by CLAUDE.md anyway (§5.1 only needs kubelet/cAdvisor
-# container metrics, which this chart's Prometheus scrapes regardless).
+# Re-enabled on the kubeadm cluster (was disabled on the old local k3s
+# WSL2 setup only: node-exporter's host-rootfs mount hit a
+# WSL2-specific "path / ... not a shared or slave mount" runc issue,
+# not something fixable via chart config). Real Linux VM nodes here
+# have no such limitation — confirmed via `uname -a` — so this now
+# runs, giving host-level node metrics on top of the cAdvisor
+# container metrics CLAUDE.md §5.1 already required.
 nodeExporter:
-  enabled: false
+  enabled: true
 prometheus-node-exporter:
-  enabled: false
+  enabled: true
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {cpu: 50m, memory: 64Mi}
 
 prometheusOperator:
   resources:

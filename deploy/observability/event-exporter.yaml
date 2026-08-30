@@ -1,0 +1,137 @@
+# kubernetes-event-exporter (resmoio image), not the custom cmd/eventwatcher
+# binary this project originally wrote. cmd/eventwatcher existed because
+# kubernetes-event-exporter v1.7.0's watch loop silently stopped
+# processing events after the first "involvedObject not found" lookup
+# error on the old k3s v1.36 cluster (binary/API-version
+# incompatibility, not a config problem — see cmd/eventwatcher/main.go's
+# original comment and commit 8bed27d). Re-tested live on this cluster
+# (kubeadm v1.35.2) before switching: the same lookup error does occur
+# under real pod churn, but the watch loop keeps running and continues
+# emitting new events afterward — it doesn't stall here. cmd/eventwatcher
+# is left in the repo (cmd/eventwatcher/main.go) as a working fallback,
+# just not deployed.
+#
+# omitLookup: true is set deliberately — without it the exporter needs
+# broader RBAC (get on pods/deployments/replicasets for enrichment,
+# confirmed by hitting "forbidden" errors in testing without it), and
+# the enrichment isn't needed anyway: the event's own embedded
+# involvedObject fields (kind/name) are already enough for
+# internal/telemetry/clickhouse/source.go's K8sEvents query. Keeping
+# this off keeps the RBAC footprint identical to cmd/eventwatcher's
+# original get/list/watch-events-only scope.
+#
+# config.namespace scopes which namespace's events are watched — same
+# role cmd/eventwatcher's WATCH_NAMESPACE played. CLAUDE.md §2.4
+# requires fault-manager excluded from every log pipeline; RBAC below
+# is a Role scoped to demo only, so a config regression that drops the
+# namespace filter hits an RBAC error instead of silently leaking
+# events cluster-wide again (same posture as the original leak fix in
+# commit d2752515, see internal/scenario/assertions_test.go).
+#
+# File sink layout is hand-matched field-for-field to what
+# cmd/eventwatcher used to write (namespace, involved_object_kind,
+# involved_object_name, reason, message, type, count) so
+# internal/telemetry/clickhouse/source.go's K8sEvents query needs no
+# changes. Verified in a scratch test that the layout engine renders
+# every field as a quoted JSON string (e.g. "count":"1", not
+# "count":1) — confirmed ClickHouse's JSONExtractInt still parses that
+# correctly, so this isn't a silent format mismatch.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: event-exporter
+  namespace: observability
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: event-exporter
+  namespace: demo
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: event-exporter
+  namespace: demo
+subjects:
+  - kind: ServiceAccount
+    name: event-exporter
+    namespace: observability
+roleRef:
+  kind: Role
+  name: event-exporter
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-exporter-config
+  namespace: observability
+data:
+  config.yaml: |
+    logLevel: info
+    logFormat: pretty
+    namespace: demo
+    omitLookup: true
+    # Default is 5s, measured from the Event object's first occurrence
+    # — not its last update. Kubernetes coalesces repeated identical
+    # events (e.g. BackOff during a CrashLoopBackOff) into Count
+    # increments on the SAME object instead of creating new ones, so
+    # any repeat more than 5s after the object's first occurrence was
+    # silently dropped as "too old" even though it just happened —
+    # caught live when case #10 (poison message)'s must_include_k8s_event_matching
+    # assertion failed to find a BackOff event that k8s events showed
+    # clearly did fire. cmd/eventwatcher (the tool this replaced) had
+    # no equivalent filter.
+    maxEventAgeSeconds: 86400
+    receivers:
+      - name: file
+        file:
+          path: /var/log/k8s-events/events.log
+          layout:
+            namespace: "{{ .Namespace }}"
+            involved_object_kind: "{{ .InvolvedObject.Kind }}"
+            involved_object_name: "{{ .InvolvedObject.Name }}"
+            reason: "{{ .Reason }}"
+            message: "{{ .Message }}"
+            type: "{{ .Type }}"
+            count: "{{ .Count }}"
+    route:
+      routes:
+        - match:
+            - receiver: file
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: event-exporter}
+  template:
+    metadata:
+      labels: {app: event-exporter}
+    spec:
+      serviceAccountName: event-exporter
+      containers:
+        - name: event-exporter
+          image: ghcr.io/resmoio/kubernetes-event-exporter:latest
+          imagePullPolicy: Always
+          args: ["-conf=/etc/event-exporter/config.yaml"]
+          volumeMounts:
+            - {name: cfg, mountPath: /etc/event-exporter}
+            - {name: events, mountPath: /var/log/k8s-events}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 50m, memory: 64Mi}
+      volumes:
+        - name: cfg
+          configMap: {name: event-exporter-config}
+        - name: events
+          persistentVolumeClaim: {claimName: k8s-events-pvc}

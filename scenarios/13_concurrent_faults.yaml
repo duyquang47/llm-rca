@@ -36,6 +36,6 @@ ground_truth:
 context_assertions:
   must_include_service: [inventory, thirdparty-mock, order, payment]
   must_include_log_template_matching: "(?i)downstream call failed|context deadline exceeded|timeout"
-  must_not_include: ["fault", "inject", "chaos", "_fault"]
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
   max_tokens: 8000
   max_services_included: 6

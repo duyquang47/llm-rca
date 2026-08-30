@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scenario-4-n-plus-one-query
+  namespace: fault-manager
+data:
+  scenario.yaml: |
+    name: n_plus_one_query
+    steps:
+      - target: inventory
+        action: set_config
+        params:
+          route: db
+          n_plus_one: true
+      - action: wait
+        duration: 90s
+      - target: inventory
+        action: reset
+        params: {route: db}
+    ground_truth:
+      service: inventory
+      cause: n_plus_one_query
+      distractors: [postgres_slow, traffic_spike]
+    context_assertions:
+      must_include_service: [inventory]
+      must_rank_in_top3: inventory
+      must_include_span_repeated:
+        - {name: "pg.query", min_count: 3}
+      must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+      max_tokens: 8000
+      max_services_included: 6
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: faultctl-n-plus-one-query
+  namespace: fault-manager
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: faultctl
+          image: docker.io/quang47/llm-rca-faultctl:v1.0
+          imagePullPolicy: Always
+          securityContext: {runAsUser: 0}
+          args: ["-scenario=/etc/faultctl/scenario.yaml", "-demo-namespace=demo"]
+          env:
+            - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}
+          volumeMounts:
+            - {name: scenario, mountPath: /etc/faultctl}
+            - {name: ground-truth, mountPath: /var/lib/faultctl/ground-truth}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: scenario
+          configMap: {name: scenario-4-n-plus-one-query}
+        - name: ground-truth
+          persistentVolumeClaim: {claimName: ground-truth-pvc}

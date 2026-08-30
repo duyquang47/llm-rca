@@ -12,11 +12,11 @@
 // filelog receiver tails — see deploy/observability/otel-collector.yaml.
 //
 // Scoped to a single namespace (WATCH_NAMESPACE, default "demo") —
-// CLAUDE.md §2.4 requires the chaos namespace excluded from every log
-// pipeline, and watching cluster-wide leaked exactly that: running
-// scenario #1 for real showed the LLM citing a k8s Event about
+// CLAUDE.md §2.4 requires the fault-manager namespace excluded from
+// every log pipeline, and watching cluster-wide leaked exactly that:
+// running scenario #1 for real showed the LLM citing a k8s Event about
 // fault-controller's own pod ("faultctl-timeout-cascade-...' chạy
-// trong namespace 'chaos'") as root-cause evidence. Filtering only at
+// trong namespace 'fault-manager'") as root-cause evidence. Filtering only at
 // the ClickHouse query layer wouldn't be enough — the leaking data
 // would still be sitting in otel_logs for anything else that queries
 // it, so this is fixed at the collection source instead.

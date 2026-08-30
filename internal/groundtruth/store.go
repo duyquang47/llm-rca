@@ -4,7 +4,7 @@
 // chặn context-builder truy cập ground truth store" only makes sense
 // against a genuinely separate store — reusing ClickHouse for both
 // would make that isolation claim meaningless. A local JSON file per
-// scenario run, readable only within the chaos namespace's own
+// scenario run, readable only within the fault-manager namespace's own
 // filesystem/pod, is the simplest thing that's actually isolated.
 package groundtruth
 

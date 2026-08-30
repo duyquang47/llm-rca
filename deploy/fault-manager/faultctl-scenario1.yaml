@@ -1,0 +1,72 @@
+# One-shot Job running scenario #1 through faultctl for real (rather
+# than the manual curl-to-/_fault this session used to validate every
+# other piece). Ground truth goes to a shared PersistentVolumeClaim
+# (see ground-truth-pvc.yaml) that evaluator will read from later —
+# same pattern as event-exporter/otel-collector's shared events file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scenario-01-timeout-cascade
+  namespace: fault-manager
+data:
+  scenario.yaml: |
+    name: timeout_cascade
+    steps:
+      - target: inventory
+        action: set_config
+        params:
+          route: /check
+          latency: {probability: 1.0, ms: 1300}
+      - action: wait
+        duration: 90s
+      - target: inventory
+        action: reset
+        params: {route: /check}
+    ground_truth:
+      service: inventory
+      cause: downstream_latency
+      distractors: [gateway_overload, order_bug]
+    context_assertions:
+      must_include_service: [inventory, order, gateway]
+      must_rank_in_top3: inventory
+      must_include_log_template_matching: "(?i)downstream call failed|context deadline exceeded|timeout"
+      must_include_metric_delta:
+        - {name_matches: "http_server_request_duration", min_pct_diff: 50}
+      must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+      max_tokens: 8000
+      max_services_included: 6
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: faultctl-timeout-cascade
+  namespace: fault-manager
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: faultctl
+          image: docker.io/quang47/llm-rca-faultctl:v1.0
+          imagePullPolicy: Always
+          # chainguard/static base runs non-root by default, which
+          # can't write to the root-owned dir local-path-provisioner
+          # creates for the PVC (same ownership as the old hostPath dir
+          # it replaced) — verify on first real run, adjust if the
+          # provisioner's default ownership differs.
+          securityContext: {runAsUser: 0}
+          args: ["-scenario=/etc/faultctl/scenario.yaml", "-demo-namespace=demo"]
+          env:
+            - {name: GROUND_TRUTH_DIR, value: /var/lib/faultctl/ground-truth}
+          volumeMounts:
+            - {name: scenario, mountPath: /etc/faultctl}
+            - {name: ground-truth, mountPath: /var/lib/faultctl/ground-truth}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: scenario
+          configMap: {name: scenario-01-timeout-cascade}
+        - name: ground-truth
+          persistentVolumeClaim: {claimName: ground-truth-pvc}

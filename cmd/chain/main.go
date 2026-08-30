@@ -83,7 +83,7 @@ func run() error {
 		}
 	}()
 	go func() {
-		// Keep this message clear of "fault"/"inject"/"chaos" — it used
+		// Keep this message clear of "fault"/"inject"/"fault-manager" — it used
 		// to say "internal fault control listening" and got caught in
 		// the CLAUDE.md §2.4 isolation check for real: case #10's
 		// several pod restarts (each re-logging this on startup) pushed
