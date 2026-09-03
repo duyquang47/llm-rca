@@ -143,6 +143,91 @@ thật" là 2 việc khác nhau). Khi quay lại nhờ tôi kiểm tra, nên ch�
 
 ---
 
+## 7. Trạng thái phiên làm việc gần nhất (2026-09-03) — ĐỌC TRƯỚC KHI TIẾP TỤC
+
+**Migrate đã xong và đã verify.** Cụm đích: kubeadm thật, 4 node (`k8s-vm-01..04`, 8 CPU/16Gi mỗi
+node), namespace `demo`/`observability`/`fault-manager` (đổi từ `chaos`, gộp `rca` vào
+`observability`). Registry: `docker.io/quang47/llm-rca-<svc>:v1.0`. Chi tiết đầy đủ nằm trong các
+commit log (xem `git log --oneline`, 12 commit gần nhất từ `4bc1e73` "Migrate deployment to real
+kubeadm cloud cluster" trở đi), không lặp lại ở đây.
+
+**13/13 kịch bản đã chạy trên cloud** (lần chạy đầu, trước khi đào sâu case #3 — xem cập nhật ngay
+dưới): 9 PASS trọn vẹn (#1, #2, #4, #6, #8, #9, #10, #11, #12), 2 FAIL (#3, #7), 1 PARTIAL (#13,
+recall=0.5), 1 không chạy được (#5, do nới resource limit).
+
+### Case #3 (db_pool_exhaustion) — đã đào sâu, tìm ra **2 bug thật**, đã sửa cả hai
+
+**Bug 1 — histogram `db_pool_wait_seconds` sai đơn vị bucket** (đã fix, commit `a1a4c99`): định
+nghĩa ở `internal/chain/handler/handler.go` hàm `dbPoolWait` không truyền
+`WithExplicitBucketBoundaries` nên OTel SDK dùng bộ mặc định `{5,10,25,...,10000}` (hiệu chỉnh cho
+giá trị **mili-giây**), trong khi code ghi giá trị bằng **giây** (`time.Since(acquireStart).Seconds()`,
+pool wait thật ~0.001-0.02s). Mọi observation thật dồn vào 1 bucket đầu → `histogram_quantile(0.99,...)`
+suy ra p99 ≈ 4.95s hoàn toàn giả, xuất hiện lặp lại y hệt trong **mọi** ContextPack nhắc tới
+`inventory` (kể cả context pack của case #7, không liên quan) vì đây là histogram cộng dồn. Đã sửa
+bằng bucket boundaries tường minh cùng thang giây với `http_server_request_duration_seconds`
+(`0.001` tới `10`). **Đã verify runtime sau redeploy**: `db_pool_wait_seconds_p99` giờ đúng ~0.001s ở
+trạng thái bình thường (trước đây báo giả 4.95 cố định). *(Lưu ý: lúc kiểm tra ngay sau redeploy —
+~20s — vẫn thấy bucket cũ do chưa đủ sample mới tích luỹ qua 1 chu kỳ scrape của Prometheus; đợi vài
+phút rồi kiểm tra lại là thấy đúng — không phải bug thật, chỉ là kiểm tra quá sớm.)*
+
+**Bug 2 — `burst_load` dùng chung 1 `user_id` cho cả 30 worker, bị cache của chính fix trước "vô
+hiệu hoá"** (đã fix, commit `efec92a`): sau khi fix bug forward query string (`3dfbb20`), cache
+per-user_id của `order` hoạt động đúng trở lại — nhưng case #3's `burst_load` hard-code
+`user_id=1` cho toàn bộ 30 worker đồng thời, nên sau request đầu tiên populate cache, gần như mọi
+request sau đó (kể cả từ worker khác) chỉ hit cache và **không** chạm tới `inventory`/`postgres`
+nữa — vô tình làm mất tác dụng của cả bài test pool exhaustion. Đã sửa `cmd/faultctl/main.go` hàm
+`burstLoad`: random hoá `user_id` mỗi request để né cache, đúng tinh thần "chạm thật vào DB pool".
+**Đã verify runtime**: sau fix, `inventory`'s p99 riêng và `db_pool_wait_seconds` đều tăng thật rõ
+trong lúc fault (trước đó phẳng lì ở baseline).
+
+**Còn lại — không phải bug, là giới hạn hiệu năng môi trường:** dù cả 2 fix trên đã đúng và đã
+verify, độ nghiêm trọng tuyệt đối của fault (`pool_size=2`, 30 worker, Postgres cùng node rất nhanh
+trên cụm cloud này) vẫn **không đủ để vượt ngưỡng `HighP99Latency` (p99 > 1s)** một cách ổn định —
+gateway p99 quan sát được dao động 0.45-1.76s tuỳ lần chạy, không đủ chắc chắn vượt ngưỡng trong
+`for: 30s`. Không tạo được alert → không có incident → evaluator không chấm điểm được. Đây là vấn đề
+**hiệu chỉnh độ mạnh của fault cho phần cứng cloud nhanh hơn**, không phải bug code — cần quyết định
+của người dùng nếu muốn tiếp tục: (a) hạ `pool_size` xuống 1, (b) tăng `concurrency`/`duration` trong
+`scenarios/03_db_pool_exhaustion.yaml`, hoặc (c) thêm độ trễ giả lập cho mỗi query khi pool đang cạn
+(giống cách case #4 n_plus_one_query dùng `roundTripCost` giả lập chi phí network thật), hoặc (d)
+chấp nhận case #3 "flaky trên môi trường nhanh" như một phát hiện, không sửa thêm.
+
+### Case #7, #5, #13 — đã điều tra, kết luận
+
+- **Case #7 (cache_down) FAIL không phải bug** — đã kiểm tra ContextPack, bằng chứng đầy đủ và đúng
+  (k8s event `ScalingReplicaSet` nêu đích danh `redis`, log lỗi cache của `order`), LLM chỉ chọn sai
+  hướng suy luận (attribute cho service có log lỗi thay vì dependency thực sự hỏng). Không sửa thêm.
+- **Case #5 (oom_crashloop)** không chạy được vì đã nới memory limit `inventory` 64Mi→512Mi (theo
+  yêu cầu nới resource limit) khiến leak không kịp OOM trong 300s. Muốn test lại: (a) tăng
+  `sustain_fault` duration trong `scenarios/05_oom_crashloop.yaml`, hoặc (b) chấp nhận đánh đổi đã
+  biết, không sửa.
+- **Case #13 (concurrent_faults)** recall=0.5 — context_assertions PASS (bằng chứng `thirdparty-mock`
+  có mặt trong pack) nhưng LLM chỉ rank được `inventory`, bỏ sót `thirdparty-mock`. Chưa điều tra sâu
+  — nghi vấn liên quan cách builder chọn candidate services khi chỉ 1 trong 2 alert thực sự fire
+  (xem log lúc chạy: incident chỉ có `services: ["gateway","inventory","order"]`, KHÔNG có
+  `thirdparty-mock`/`payment` — có thể `thirdparty-mock`'s alert riêng không đủ mạnh để fire cùng
+  lúc, y hệt kiểu vấn đề case #3 vừa gặp). Đáng xem lại nếu muốn đào tiếp.
+
+### Ghi chú vận hành quan trọng, rút ra từ phiên này (áp dụng khi chạy case nào khác)
+
+- **`internal/incident.Grouper` gộp incident theo cửa sổ trượt 5 phút** (`defaultWindow` trong
+  `internal/incident/grouper.go`) dựa trên `alert.FiredAt - inc.UpdatedAt`, không phải theo scenario.
+  Chạy 2 case liên tiếp cách nhau <5 phút (tính từ **lần alert cuối cùng**, không phải lúc fault kết
+  thúc) sẽ bị gộp vào cùng 1 incident, kết quả evaluator sẽ sai/lẫn lộn. Luôn kiểm tra
+  `curl alertmanager:9093/api/v2/alerts?filter=namespace="demo"` trả về rỗng VÀ đã rỗng ổn định vài
+  phút trước khi chạy case tiếp theo — đừng chỉ đợi một khoảng thời gian cố định.
+- **`cmd/evaluator` chỉ query ClickHouse 1 lần duy nhất khi chạy** (`findIncident` trong
+  `cmd/evaluator/main.go`, không có retry/poll loop dù tham số `-search-window` mặc định 10 phút chỉ
+  là biên tìm kiếm, không phải thời gian chờ). Áp dụng evaluator ngay sau khi faultctl vừa xong Job
+  gần như luôn báo "no incident found" giả — phải đợi ~2-3 phút (đủ cho alert `for:30s` +
+  `group_wait` + `collectionWindow` 20s + phân tích) rồi mới `kubectl apply` evaluator.
+- **`kubectl logs --since=Xm` không đáng tin** để tra log gần đây — dùng `--tail=N` thay thế (đã gặp
+  trường hợp `--since` bỏ sót log thật có tồn tại).
+- Deployment dùng PVC RWO + `RollingUpdate` mặc định có thể **deadlock thật** nếu pod mới không bao
+  giờ Ready (ClickHouse) hoặc cố ý fail (case #12 config_error trên `inventory`) — cả 2 đã đổi sang
+  `strategy: {type: Recreate}`.
+
+---
+
 *File này được tạo theo yêu cầu trước khi migrate dự án sang k8s cloud — tổng hợp từ khảo sát trực
 tiếp các file `deploy/` hiện có (28 file dùng `hostPath`, 5 tên image build bằng `ko`) và các bài
 học thật đã ghi trong `BAO_CAO_DU_AN.md`.*
