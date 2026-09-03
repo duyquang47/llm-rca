@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -236,10 +238,29 @@ func resetConfig(client *http.Client, namespace string, step scenario.Step) erro
 // ms, so the fault alone produces no observable signal without a
 // concurrent burst forcing requests to actually queue on the pool.
 func burstLoad(client *http.Client, step scenario.Step) error {
-	url, _ := step.Params["url"].(string)
-	if url == "" {
+	rawURL, _ := step.Params["url"].(string)
+	if rawURL == "" {
 		return fmt.Errorf("burst_load requires params.url")
 	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid url %q: %w", rawURL, err)
+	}
+	// If the URL already has a user_id, vary it per-request instead of
+	// reusing the configured value verbatim. Case #3 (db_pool_exhaustion)
+	// hard-codes the same user_id for every concurrent worker to keep
+	// the scenario file simple — but order caches its downstream calls
+	// per user_id (see internal/chain/handler's cache-aside logic), so
+	// once the first request of the burst populates that one cache
+	// key, nearly every later request/worker just hits the cache and
+	// never reaches inventory/postgres at all, defeating the point of
+	// "hammer the pool with concurrent connections". Found live: after
+	// fixing callDownstream to forward query params (a correctness fix
+	// needed for every other scenario), this burst stopped generating
+	// enough real load to exhaust a pool_size=2 connection pool.
+	q := parsed.Query()
+	varyUserID := q.Has("user_id")
+
 	concurrency := paramInt(step.Params["concurrency"], 10)
 	d, err := time.ParseDuration(step.Duration)
 	if err != nil {
@@ -250,16 +271,24 @@ func burstLoad(client *http.Client, step scenario.Step) error {
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
-		go func() {
+		go func(workerID int) {
 			defer wg.Done()
+			u := *parsed
 			for time.Now().Before(deadline) {
-				resp, err := client.Get(url)
+				reqURL := u.String()
+				if varyUserID {
+					qq := u.Query()
+					qq.Set("user_id", fmt.Sprintf("%d", rand.Intn(1_000_000)+1))
+					u.RawQuery = qq.Encode()
+					reqURL = u.String()
+				}
+				resp, err := client.Get(reqURL)
 				if err != nil {
 					continue
 				}
 				resp.Body.Close()
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 	return nil
