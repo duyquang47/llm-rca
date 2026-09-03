@@ -293,9 +293,23 @@ func (s *Server) callDownstream(ctx context.Context, inbound *http.Request, call
 	var lastErr error
 	attempts := s.faults.EffectiveRetry(call.Name, call.Retry) + 1
 
+	// inbound's query string (user_id, id, ...) must carry forward to
+	// every hop — downstream handlers read the same params (e.g.
+	// substituteParams for cache keys) from their OWN request, not from
+	// anything gateway/order pass explicitly. Dropping it here meant
+	// every hop's cache key templated to the literal string
+	// "user:{user_id}" instead of the real id, so the very first
+	// request populated that one shared key and every later request
+	// (any user_id) hit it — collapsing effectively all downstream
+	// traffic to inventory/payment/notify-worker into cache hits.
+	callURL := call.URL
+	if inbound.URL.RawQuery != "" {
+		callURL += "?" + inbound.URL.RawQuery
+	}
+
 	for attempt := 0; attempt < attempts; attempt++ {
 		callCtx, cancel := context.WithTimeout(ctx, call.Timeout)
-		req, err := http.NewRequestWithContext(callCtx, inbound.Method, call.URL, nil)
+		req, err := http.NewRequestWithContext(callCtx, inbound.Method, callURL, nil)
 		if err != nil {
 			cancel()
 			return fmt.Errorf("build request to %s: %w", call.Name, err)
