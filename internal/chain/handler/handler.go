@@ -35,6 +35,19 @@ var dbPoolWait = func() metric.Float64Histogram {
 	h, _ := otel.Meter("chain/db").Float64Histogram(
 		"db_pool_wait_seconds",
 		metric.WithDescription("time spent waiting to acquire a DB connection from the pool"),
+		// Without explicit boundaries the SDK falls back to its generic
+		// default set ({5, 10, 25, ..., 10000}), calibrated for
+		// millisecond-scale values — but this records Seconds(), and a
+		// real pool wait here is sub-100ms in the healthy case. Every
+		// observation collapsed into the single bucket below the
+		// smallest boundary (5), so histogram_quantile had no
+		// resolution at all and extrapolated p99 to ~5 regardless of
+		// the real values — found live when case #3 (db_pool_exhaustion)
+		// reported a 4.95s p99 while every actual HTTP span for the
+		// same requests topped out under 15ms. Boundaries here mirror
+		// the seconds-scale set otelhttp uses for
+		// http_server_request_duration_seconds.
+		metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
 	)
 	return h
 }()
