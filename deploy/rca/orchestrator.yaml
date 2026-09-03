@@ -47,8 +47,8 @@ spec:
           ports:
             - {containerPort: 8080, name: http}
           resources:
-            requests: {cpu: 50m, memory: 64Mi}
-            limits: {cpu: 300m, memory: 384Mi}
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 1000m, memory: 512Mi}
 ---
 apiVersion: v1
 kind: Service

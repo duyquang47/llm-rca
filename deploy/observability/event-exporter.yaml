@@ -128,8 +128,8 @@ spec:
             - {name: cfg, mountPath: /etc/event-exporter}
             - {name: events, mountPath: /var/log/k8s-events}
           resources:
-            requests: {cpu: 20m, memory: 32Mi}
-            limits: {cpu: 50m, memory: 64Mi}
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 128Mi}
       volumes:
         - name: cfg
           configMap: {name: event-exporter-config}

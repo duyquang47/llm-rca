@@ -18,6 +18,17 @@ metadata:
   namespace: observability
 spec:
   replicas: 1
+  # RWO PVC (see below) + single replica means two pods can never
+  # safely coexist — RollingUpdate's surge briefly tries anyway,
+  # and ClickHouse's own /var/lib/clickhouse/status lock file then
+  # makes the new pod refuse to start until the old one fully
+  # releases it. Found live: a resource-limit bump triggered a
+  # rollout that deadlocked exactly this way (new pod crash-looping
+  # on "Cannot lock file... Another server instance is already
+  # running", old ReplicaSet never scaling down because the new one
+  # never became Ready — Deployment stuck forever without manual
+  # intervention). Recreate avoids the surge entirely.
+  strategy: {type: Recreate}
   selector:
     matchLabels: {app: clickhouse}
   template:
@@ -38,8 +49,8 @@ spec:
           volumeMounts:
             - {name: data, mountPath: /var/lib/clickhouse}
           resources:
-            requests: {cpu: 300m, memory: 512Mi}
-            limits: {cpu: 1000m, memory: 1Gi}
+            requests: {cpu: 1000m, memory: 2Gi}
+            limits: {cpu: 2000m, memory: 4Gi}
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: clickhouse-data}

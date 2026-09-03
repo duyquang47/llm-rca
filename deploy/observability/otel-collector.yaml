@@ -105,8 +105,8 @@ spec:
             - {name: cfg, mountPath: /etc/otel}
             - {name: events, mountPath: /var/log/k8s-events, readOnly: true}
           resources:
-            requests: {cpu: 100m, memory: 128Mi}
-            limits: {cpu: 300m, memory: 256Mi}
+            requests: {cpu: 200m, memory: 256Mi}
+            limits: {cpu: 1000m, memory: 1Gi}
       volumes:
         - name: cfg
           configMap: {name: otel-collector-config}

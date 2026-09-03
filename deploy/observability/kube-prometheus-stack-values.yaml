@@ -1,33 +1,35 @@
-# Values for prometheus-community/kube-prometheus-stack, sized down for
-# the POC's tight local resource budget (CLAUDE.md §8). cAdvisor scraping
-# (§5.1 point 1) and kube-state-metrics both come bundled with this
-# chart — do not deploy a second standalone kube-state-metrics.
+# Values for prometheus-community/kube-prometheus-stack. Originally sized
+# down for the POC's tight local resource budget (CLAUDE.md §8); loosened
+# after migrating to a cloud cluster with real headroom (32 CPU/64Gi across
+# 4 nodes) — see MIGRATE_CLOUD.md mục 4. cAdvisor scraping (§5.1 point 1)
+# and kube-state-metrics both come bundled with this chart — do not deploy
+# a second standalone kube-state-metrics.
 prometheus:
   prometheusSpec:
     retention: 24h
     resources:
-      requests: {cpu: 150m, memory: 256Mi}
-      limits: {cpu: 350m, memory: 512Mi}
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: 2000m, memory: 2Gi}
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
 
 alertmanager:
   alertmanagerSpec:
     resources:
-      requests: {cpu: 20m, memory: 32Mi}
-      limits: {cpu: 100m, memory: 64Mi}
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 200m, memory: 256Mi}
 
 grafana:
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {cpu: 150m, memory: 384Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
   adminPassword: admin
   defaultDashboardsEnabled: false
 
 kube-state-metrics:
   resources:
-    requests: {cpu: 20m, memory: 32Mi}
-    limits: {cpu: 50m, memory: 64Mi}
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}
 
 # Re-enabled on the kubeadm cluster (was disabled on the old local k3s
 # WSL2 setup only: node-exporter's host-rootfs mount hit a
@@ -41,10 +43,10 @@ nodeExporter:
 prometheus-node-exporter:
   enabled: true
   resources:
-    requests: {cpu: 20m, memory: 32Mi}
-    limits: {cpu: 50m, memory: 64Mi}
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}
 
 prometheusOperator:
   resources:
-    requests: {cpu: 30m, memory: 64Mi}
-    limits: {cpu: 100m, memory: 128Mi}
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 200m, memory: 256Mi}

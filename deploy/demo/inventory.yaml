@@ -40,7 +40,8 @@ spec:
             - {containerPort: 8080, name: http}
             - {containerPort: 9999, name: fault}
           resources:
-            limits: {memory: 64Mi, cpu: 200m}
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 1000m, memory: 512Mi}
           volumeMounts:
             - {name: cfg, mountPath: /etc/chain}
       volumes:
