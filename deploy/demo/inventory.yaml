@@ -22,6 +22,14 @@ metadata:
   namespace: demo
 spec:
   replicas: 1
+  # Recreate, not the default RollingUpdate: case #12 (config_error)
+  # removes CONFIG_PATH via a Deployment patch expecting inventory to
+  # show zero available replicas for the fault window. With
+  # RollingUpdate, the new (broken) pod never becomes Ready, so k8s
+  # never terminates the still-healthy old pod — the Service keeps
+  # routing to it the entire time and the fault never actually
+  # disrupts anything. Recreate forces the old pod down first.
+  strategy: {type: Recreate}
   selector:
     matchLabels: {app: inventory}
   template:
