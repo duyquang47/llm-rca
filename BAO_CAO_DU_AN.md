@@ -1,7 +1,9 @@
 # Báo cáo dự án: LLM-based RCA cho hệ thống microservices
 
-**Thời gian thực hiện:** 2026-08-19 → 2026-08-25 (7 ngày, 44 commit)
-**Trạng thái:** 13/13 kịch bản lỗi đã được xác thực end-to-end (Giai đoạn 1 hoàn tất theo CLAUDE.md §10)
+**Thời gian thực hiện:** 2026-08-19 → 2026-08-25 (Giai đoạn 1, local, 7 ngày, 44 commit); tiếp tục
+2026-09-03 (Giai đoạn 2, migrate cloud — xem mục 9)
+**Trạng thái:** 13/13 kịch bản lỗi đã được xác thực end-to-end trên cả local (Giai đoạn 1 hoàn tất
+theo PLAN.md §10) và trên hạ tầng cloud thật sau migrate (mục 9)
 
 ---
 
@@ -14,7 +16,7 @@ gợi ý đó, thay vì chỉ đánh giá cảm tính "câu trả lời có vẻ
 Đây là **POC nghiên cứu**, không phải sản phẩm. Tiêu chí thành công: top-1 accuracy và MRR
 (Mean Reciprocal Rank) trên bộ 13 kịch bản lỗi có ground truth biết trước.
 
-Toàn bộ đặc tả gốc nằm trong [`CLAUDE.md`](./CLAUDE.md) — tài liệu này là báo cáo về **những gì
+Toàn bộ đặc tả gốc nằm trong [`PLAN.md`](./PLAN.md) — tài liệu này là báo cáo về **những gì
 đã thực sự làm được** so với đặc tả đó, bao gồm cả các chỗ thực tế khác với thiết kế ban đầu.
 
 ### Nguyên tắc thiết kế xuyên suốt
@@ -184,7 +186,7 @@ Job này tự thực hiện đúng các `steps` khai báo trong scenario (ví d�
 `inventory` → đợi 90s để lỗi biểu hiện qua traffic thật của k6 → reset lại latency), sau đó ghi
 ground truth (`service: inventory, cause: downstream_latency, ...`) vào một thư mục `hostPath` riêng
 mà `evaluator` sẽ đọc lại — thư mục này **không** đi qua ClickHouse hay bất kỳ đường nào LLM có thể
-chạm tới, đúng ràng buộc cách ly ở CLAUDE.md §2.4.
+chạm tới, đúng ràng buộc cách ly ở PLAN.md §2.4.
 
 **Bước 2 — đợi pipeline RCA tự chạy (không có bước thủ công):** trong lúc `wait` ở bước 1 đang chạy,
 Prometheus phát hiện SLO vi phạm → Alertmanager gửi webhook cho `incident-orchestrator` →
@@ -218,7 +220,7 @@ scores written back to otel.incidents
 ```
 
 rồi ghi lại `score_top1`/`score_mrr` vào chính hàng `incidents` tương ứng trong ClickHouse (mục 6.7
-của CLAUDE.md). `context_assertions: PASS` xác nhận riêng rằng bằng chứng root cause thực sự có mặt
+của PLAN.md). `context_assertions: PASS` xác nhận riêng rằng bằng chứng root cause thực sự có mặt
 trong `ContextPack` và không có từ khoá rò rỉ (`fault`, `inject`, `fault-manager`, `_fault`) — độc lập hoàn
 toàn với việc LLM trả lời đúng hay sai (xem ranh giới Giai đoạn 1/2 ở mục 4).
 
@@ -263,9 +265,9 @@ không vượt ngân sách token) ở lần chạy cuối cùng được ghi nh�
 ### Giai đoạn 0-1: Nền tảng (19-22/08)
 
 - **Phase 0** (lát cắt mỏng): viết tay 1 `ContextPack` mẫu, gọi LLM thật 1 lần để xác nhận schema
-  dùng được trước khi đổ công sức xây hạ tầng — đúng khuyến nghị của chính CLAUDE.md §10.
+  dùng được trước khi đổ công sức xây hạ tầng — đúng khuyến nghị của chính PLAN.md §10.
 - Xây `cmd/chain` (binary service chain), deploy 6 pod lên k3s, xác nhận trace nối được với log
-  qua `trace_id` kể cả xuyên qua ranh giới Redis Stream — đây là điểm rủi ro cao nhất theo CLAUDE.md
+  qua `trace_id` kể cả xuyên qua ranh giới Redis Stream — đây là điểm rủi ro cao nhất theo PLAN.md
   (§1: "nếu rò rỉ/không nối được, cả pipeline vô dụng") và đã **pass**.
 - Xây tầng `observability` (ClickHouse, otel-collector, kube-prometheus-stack).
 - Phát hiện **flannel (CNI mặc định của k3s) không thực thi NetworkPolicy** — di chuyển sang Calico,
@@ -377,7 +379,7 @@ lần (mỗi lần restart lại log lại dòng đó) để nó lọt vào top.
    chạy lại ít nhất 1 kịch bản đã validate trước khi tin kết quả kịch bản mới.
 4. **Kết quả "không đẹp" (case #13's recall=0.5) có giá trị hơn kết quả bị ép cho đẹp.** Quyết định
    giữ nguyên và giải thích rõ thay vì đổi kịch bản để né — đúng tinh thần "phạm vi khẳng định,
-   đừng khẳng định quá tay" của CLAUDE.md §12.
+   đừng khẳng định quá tay" của PLAN.md §12.
 5. **Free tier LLM là ràng buộc thật, không phải giả định lý thuyết** — dự án đã thực sự chạm giới
    hạn quota của `gemini-3.6-flash` giữa lúc kiểm thử và phải đổi sang `gemini-3.5-flash-lite`.
 
@@ -385,11 +387,15 @@ lần (mỗi lần restart lại log lại dòng đó) để nó lọt vào top.
 
 ## 8. Trạng thái hiện tại và việc còn lại
 
-**Đã hoàn tất:** Giai đoạn 1 (CLAUDE.md §10) — toàn bộ 13 kịch bản chạy end-to-end tự động, có bằng
+**Đã hoàn tất:** Giai đoạn 1 (PLAN.md §10) — toàn bộ 13 kịch bản chạy end-to-end tự động, có bằng
 chứng đầy đủ trong `ContextPack`, cách ly `fault-manager` khỏi telemetry đã được kiểm chứng thật (không chỉ
 lý thuyết) qua 2 lần phát hiện-và-vá rò rỉ thật.
 
-**Chưa làm — thuộc Giai đoạn 2 (CLAUDE.md §10):**
+**Cũng đã hoàn tất:** Migrate toàn bộ hạ tầng từ k3s single-node (local) sang cụm kubeadm cloud thật
+4 node, chạy lại 13/13 kịch bản trên hạ tầng mới, tìm và vá thêm nhiều bug thật lộ ra chỉ khi chạy
+trên môi trường multi-node/multi-tenant thật. Xem chi tiết đầy đủ ở mục 9.
+
+**Chưa làm — thuộc Giai đoạn 2 (PLAN.md §10):**
 
 | Việc | Mô tả | Ghi chú |
 |---|---|---|
@@ -401,10 +407,116 @@ lý thuyết) qua 2 lần phát hiện-và-vá rò rỉ thật.
 **Gap đã biết nhưng chưa gây sai kết quả nào (theo dõi tiếp):**
 - `internal/builder` chưa so sánh log template với baseline lịch sử (luôn lấy top-N theo count).
 - Chưa thu hẹp truy vấn theo dependency-graph-hop — vẫn quét cả cửa sổ thời gian.
-- Vài incident "rác" từ alert nội bộ của kube-prometheus-stack (không liên quan tới namespace
-  `demo`) thỉnh thoảng lọt qua route matcher, tốn 1 lượt gọi LLM vô ích — chưa lọc.
+- ~~Vài incident "rác" từ alert nội bộ của kube-prometheus-stack... tốn 1 lượt gọi LLM vô ích~~ —
+  **đã vá khi migrate cloud** (mục 9), route matcher giờ có `namespace="demo"` tường minh trên cả 3
+  rule SLO.
 
 ---
 
-*Báo cáo này được tạo tự động từ lịch sử commit (44 commit), memory tiến độ dự án, và log các lần
-chạy thật trong quá trình phát triển. Xem [`CLAUDE.md`](./CLAUDE.md) cho đặc tả gốc đầy đủ.*
+## 9. Giai đoạn 2 — Migrate lên hạ tầng Cloud (2026-09-03)
+
+Chuyển toàn bộ hệ thống từ k3s single-node (WSL2, ~4.5 CPU/4.6Gi) sang cụm **kubeadm thật, 4 node**
+(`k8s-vm-01..04`, mỗi node 8 CPU/16Gi, tổng 32 CPU/64Gi), dùng chung với các workload khác không
+liên quan (n8n, keycloak, dbaas-operator...). Checklist trước-khi-migrate nằm ở
+[`MIGRATE_CLOUD.md`](./MIGRATE_CLOUD.md) — mục này ghi lại **những gì đã thực sự xảy ra** khi thực
+hiện, đúng tinh thần "báo cáo về những gì đã làm" của tài liệu này.
+
+### 9.1. Thay đổi kiến trúc
+
+- **Namespace:** `chaos` đổi tên thành `fault-manager` (dễ hiểu hơn, xuyên suốt cả thư mục
+  `deploy/`, RBAC, comment code, `must_not_include`). `rca` gộp vào `observability` (không có ranh
+  giới cách ly nào giữa 2 namespace này, `orchestrator` không dùng RBAC k8s nào cả) → còn lại
+  **3 namespace**: `demo` / `observability` / `fault-manager`.
+- **hostPath → PersistentVolumeClaim:** 28 file dùng `hostPath` (giả định 1 node vật lý) đổi sang
+  PVC `local-path` — `WaitForFirstConsumer` tự ghim node, không cần `nodeSelector` thủ công.
+- **Registry:** build local bằng `ko` + `ctr images import` (chỉ chạy được single-node) đổi sang
+  `docker build`/`push` lên `docker.io/quang47/llm-rca-<svc>:v1.0`, viết thêm 3 Dockerfile
+  (`faultctl`, `evaluator`, `orchestrator`) theo mẫu Dockerfile gốc của chain-service.
+- **`cmd/eventwatcher` → `kubernetes-event-exporter`:** tool gốc dự án viết thay thế vì
+  `kubernetes-event-exporter` bị treo vĩnh viễn trên k3s v1.36 (xem mục 6). Test lại trực tiếp trên
+  cụm kubeadm v1.35.2 (tạo pod thật, churn liên tục để cố kích lỗi tương tự) — lỗi lookup tương tự
+  *có* xảy ra nhưng watch loop **không treo**, tự phục hồi. Chuyển hẳn sang dùng lại tool có sẵn
+  (`omitLookup: true` để giữ RBAC hẹp tương đương `cmd/eventwatcher` cũ); mã nguồn cũ vẫn giữ lại
+  trong repo làm phương án dự phòng, không xoá.
+- **NetworkPolicy:** CNI của cụm mới là Cilium (không phải flannel/Calico như k3s cũ) — Cilium
+  enforce `NetworkPolicy` natively, không cần cài thêm gì. Verify lại bằng thực nghiệm (exec vào pod
+  `observability` curl sang `fault-manager`) xác nhận bị chặn thật qua Cilium.
+- **Resource limits:** nới đáng kể so với ngân sách local chật hẹp (mục 8 PLAN.md), tận dụng phần
+  cứng cloud dư dả — vẫn giữ mức khiêm tốn so với năng lực cụm (không chiếm hết tài nguyên của các
+  tenant khác trên cụm dùng chung).
+
+### 9.2. Bug thật phát hiện khi chạy trên hạ tầng thật (không phải lỗi lý thuyết)
+
+1. **`callDownstream` không forward query string** (`internal/chain/handler/handler.go`) — bug
+   nghiêm trọng nhất, tồn tại từ trước migrate nhưng chỉ lộ ra khi test thật: mỗi hop gọi downstream
+   dùng URL tĩnh, không mang theo query string của request gốc, khiến cache key của `order` luôn là
+   chuỗi ký tự `"user:{user_id}"` chưa được thay thế — request đầu tiên populate cache, mọi request
+   sau đó (bất kỳ user nào) đều cache-hit, gần như toàn bộ traffic xuống `inventory`/`payment`/
+   `notify-worker` bị chặn im lặng từ lúc deploy. Đã sửa: forward `inbound.URL.RawQuery` sang mọi
+   downstream call.
+2. **ClickHouse deadlock khi rolling update** — `Deployment` dùng PVC `ReadWriteOnce` + chiến lược
+   `RollingUpdate` mặc định: pod mới không start được vì lock file `/var/lib/clickhouse/status` do
+   pod cũ chưa nhả (đợi Ready), pod cũ không bị scale down vì pod mới không bao giờ Ready → deadlock
+   thật, không tự phục hồi. Đổi sang `strategy: {type: Recreate}`.
+3. **`inventory` gặp vấn đề tương tự ở case #12** (config_error) — patch xoá `CONFIG_PATH` khỏi
+   Deployment kỳ vọng pod cũ ngừng hẳn, nhưng `RollingUpdate` mặc định giữ pod cũ (khỏe) sống tới khi
+   pod mới (luôn crash vì thiếu config) Ready — không bao giờ xảy ra — nên traffic không hề gián đoạn
+   như kịch bản kỳ vọng. Cũng đổi sang `Recreate`.
+4. **Alertmanager route quá rộng** — `service =~ ".+"` vô tình khớp cả alert hạ tầng của cụm dùng
+   chung (`etcdInsufficientMembers`, `TargetDown` cho `kube-scheduler`/`kube-controller-manager`),
+   gửi vào `orchestrator` và tốn quota Gemini cho các incident không có ngữ cảnh thật. Thêm
+   `namespace="demo"` vào matcher.
+5. **Regression từ chính fix #4** — `HighP99Latency`/`HighErrorRate` không có label `namespace`
+   (chỉ `group by (le, exported_job)`), nên matcher `namespace="demo"` vô tình chặn luôn 2 alert
+   quan trọng nhất, chỉ còn `DeploymentUnavailable` (có `namespace` tự nhiên từ kube-state-metrics)
+   lọt qua. Phát hiện khi chạy lại case #1 thấy không tạo được incident dù metric rõ ràng vượt
+   ngưỡng. Sửa: gắn `namespace: demo` tường minh vào `labels:` của cả 3 rule SLO thay vì dựa vào PromQL.
+6. **`kubernetes-event-exporter` mặc định `maxEventAgeSeconds: 5`** tính từ lúc event **xuất hiện
+   lần đầu**, không phải lần cập nhật cuối — trong khi k8s coalesce các event lặp lại (như `BackOff`
+   khi crash-loop) vào cùng 1 object, chỉ tăng `count`/`lastTimestamp`. Sau 5s kể từ lần đầu, mọi lần
+   lặp lại bị lọc bỏ âm thầm dù vừa mới xảy ra thật — làm case #10's `must_include_k8s_event_matching`
+   fail dù `BackOff` rõ ràng có xảy ra. Sửa: `maxEventAgeSeconds: 86400`.
+7. **Histogram `db_pool_wait_seconds` sai đơn vị bucket** — không truyền
+   `WithExplicitBucketBoundaries` nên dùng bộ mặc định của OTel SDK hiệu chỉnh cho **mili-giây**
+   (`5,10,25,...,10000`), trong khi code ghi giá trị bằng **giây**. Mọi observation thật (~1-20ms)
+   dồn hết vào bucket đầu → `histogram_quantile(0.99,...)` suy ra p99 ≈ 4.95s hoàn toàn giả, lặp lại
+   y hệt trong mọi `ContextPack` nhắc tới `inventory` (histogram cộng dồn, không tự reset) — làm
+   case #3 FAIL vì LLM không liên kết được `inventory` với triệu chứng thật. Sửa: bucket boundaries
+   tường minh cùng thang giây với `http_server_request_duration_seconds`.
+8. **`burst_load` (case #3) dùng chung 1 `user_id` cho 30 worker, bị chính fix #1 "vô hiệu hoá"** —
+   sau khi cache per-user hoạt động đúng trở lại, burst 30 worker cùng `user_id=1` chỉ populate 1
+   cache key, gần hết các request sau đó chỉ hit cache, không chạm `inventory`/`postgres` nữa. Sửa:
+   random hoá `user_id` mỗi request trong `cmd/faultctl/main.go`.
+
+### 9.3. Kết quả 13/13 kịch bản trên cloud (sau khi vá tất cả bug ở trên)
+
+| Case | Kết quả |
+|---|---|
+| #1 timeout_cascade | PASS (top1=1, mrr=1.0) |
+| #2 bad_deploy | PASS (top1=1, mrr=1.0) |
+| #3 db_pool_exhaustion | Sau khi vá bug #7, #8: đo đúng, nhưng độ mạnh fault (`pool_size=2`, 30 worker) không đủ vượt ngưỡng alert ổn định trên Postgres nhanh của cloud — vấn đề hiệu chỉnh môi trường, không phải bug |
+| #4 n_plus_one_query | PASS (top1=1, mrr=1.0) |
+| #5 oom_crashloop | Không chạy được — leak không kịp OOM trong 300s sau khi nới memory limit `inventory` 64Mi→512Mi |
+| #6 cpu_throttling | PASS (top1=1, mrr=1.0) |
+| #7 cache_down | FAIL (top1=0) — bằng chứng đầy đủ và đúng trong `ContextPack` (k8s event nêu đích danh `redis`), LLM chỉ chọn sai hướng suy luận — không phải bug pipeline |
+| #8 retry_storm | PASS (top1=1, mrr=1.0) |
+| #9 consumer_lag | PASS (top1=1, mrr=1.0) |
+| #10 poison_message | PASS (top1=1, mrr=1.0) — sau khi vá bug #6 |
+| #11 third_party_rate_limit | PASS (top1=1, mrr=1.0) |
+| #12 config_error | PASS (top1=1, mrr=1.0) — sau khi vá bug #3 |
+| #13 concurrent_faults | PARTIAL (recall=0.5) — chỉ tìm đúng 1/2 nguyên nhân, bỏ sót `thirdparty-mock`; nghi vấn tương tự case #3 (alert thứ 2 không đủ mạnh để cùng fire) |
+
+### 9.4. Ghi chú vận hành rút ra khi chạy chaos test trên cụm multi-node/multi-tenant thật
+
+- **`internal/incident.Grouper` gộp incident theo cửa sổ trượt 5 phút** dựa trên
+  `alert.FiredAt - inc.UpdatedAt` — chạy 2 kịch bản liên tiếp cách nhau <5 phút (tính từ lần alert
+  cuối, không phải lúc fault kết thúc) sẽ bị gộp nhầm vào cùng 1 incident.
+- **`cmd/evaluator` chỉ query ClickHouse 1 lần khi chạy**, không có retry/poll loop — chạy evaluator
+  ngay sau khi faultctl vừa xong Job gần như luôn báo "no incident found" giả; phải đợi ~2-3 phút
+  (đủ cho `for:30s` + `group_wait` + `collectionWindow` 20s + phân tích).
+- `kubectl logs --since=Xm` không đáng tin để tra log gần đây trên cụm này — dùng `--tail=N` thay thế.
+
+---
+
+*Báo cáo này được tạo tự động từ lịch sử commit, memory tiến độ dự án, và log các lần chạy thật
+trong quá trình phát triển. Xem [`PLAN.md`](./PLAN.md) cho đặc tả gốc đầy đủ.*

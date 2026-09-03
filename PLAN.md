@@ -12,8 +12,11 @@ cho các dịch vụ chạy trên môi trường Kubernetes.
 Đây là **POC nghiên cứu có đo đạc**, không phải sản phẩm. Tiêu chí thành công là:
 top-1 accuracy và MRR trên bộ 13 kịch bản lỗi có ground truth, không phải "câu trả lời trông hợp lý".
 
-Ràng buộc phần cứng: 1 máy, 8–12 CPU / 16GB RAM, chạy k3s single-node.
-Ngân sách tài nguyên mục tiêu: **≈ 4.5 CPU, ≈ 4.6Gi RAM** ở trạng thái nền.
+**Hạ tầng hiện tại (sau migrate 2026-09-03):** cụm kubeadm thật, 4 node (8 CPU/16Gi mỗi node,
+tổng 32 CPU/64Gi), dùng chung với các tenant khác không liên quan tới dự án — xem
+[`BAO_CAO_DU_AN.md`](./BAO_CAO_DU_AN.md) mục 9 cho toàn bộ chi tiết migrate + bug tìm được. Ràng
+buộc phần cứng gốc lúc bắt đầu (đã không còn áp dụng, giữ lại để hiểu bối cảnh các quyết định thiết
+kế ban đầu): 1 máy, 8–12 CPU / 16GB RAM, chạy k3s single-node, ngân sách mục tiêu ≈ 4.5 CPU/4.6Gi RAM.
 
 ### Nguyên tắc thiết kế xuyên suốt
 
@@ -33,7 +36,8 @@ Ngân sách tài nguyên mục tiêu: **≈ 4.5 CPU, ≈ 4.6Gi RAM** ở trạng
 
 ## 2. Kiến trúc tổng thể
 
-Bốn namespace, ~21 pod.
+**Ba namespace** (`rca` đã gộp vào `observability` khi migrate cloud — không có ranh giới cách ly
+nào giữa 2 namespace này, `orchestrator` không dùng RBAC k8s nào cả nên gộp không đổi logic), ~21 pod.
 
 ### 2.1. Namespace `demo` — workload mô phỏng
 
@@ -50,7 +54,9 @@ chạy **cùng một image Go**, khác nhau duy nhất ở ConfigMap được mo
 Chuỗi gọi sâu 4 tầng (`gateway → order → inventory → postgres`) là bắt buộc — cần thiết để
 chứng minh trường hợp root cause cách symptom 2 hop.
 
-### 2.2. Namespace `observability` — thu thập và lưu trữ
+### 2.2. Namespace `observability` — thu thập, lưu trữ, và pipeline phân tích
+
+(`rca` đã gộp vào namespace này khi migrate cloud — xem đầu mục 2.)
 
 ```
 service pod (OTel SDK)
@@ -63,13 +69,9 @@ otel-collector  ──[traces, logs]──→ ClickHouse
 kube-state-metrics ──┐
 event-exporter ──────┴→ (metrics/logs qua collector)
 Grafana → đọc ClickHouse + Prometheus
-```
 
-**Trace và log dùng mô hình push. Metric dùng mô hình pull.** Đây là chỗ hay gây nhầm.
-
-### 2.3. Namespace `rca` — pipeline phân tích
-
-```
+                              │ webhook khi alert fires
+                              ▼
 Alertmanager webhook
    ▼
 incident-orchestrator   (dedupe, gom nhóm, state machine, retry)
@@ -81,11 +83,13 @@ LLM API                 (trả JSON có thứ hạng nguyên nhân)
 bảng `incidents` trong ClickHouse
 ```
 
+**Trace và log dùng mô hình push. Metric dùng mô hình pull.** Đây là chỗ hay gây nhầm.
+
 Ghi chú kiến trúc: vì dùng kho dữ liệu hợp nhất, **context-collector là module bên trong
 context-builder**, không tách thành process riêng. Nếu đề tài yêu cầu thể hiện tính module,
 vẫn giữ ranh giới interface rõ ràng ở tầng package (`internal/collector`, `internal/builder`).
 
-### 2.4. Namespace `fault-manager` — điều khiển và đánh giá
+### 2.3. Namespace `fault-manager` — điều khiển và đánh giá
 
 ```
 fault-controller  → đọc scenario YAML → gọi /_fault hoặc patch k8s resource
@@ -100,17 +104,16 @@ k6                → sinh tải nền 20–50 rps
   Một request bị inject latency phải trông y hệt một request chậm thật.
 - NetworkPolicy chặn context-builder truy cập ground truth store.
 
-> **Ghi chú bổ sung — CNI mặc định của k3s không enforce NetworkPolicy:** flannel (CNI mặc định,
-> không tách pod riêng) hoàn toàn bỏ qua object `NetworkPolicy` — đã kiểm chứng thực nghiệm bằng
-> policy deny-all, traffic vẫn lọt qua bình thường. Phải đổi sang Calico (nhẹ hơn Cilium, phù hợp
-> ngân sách tài nguyên) mới có isolation network thật. Khi ghép Calico vào k3s có 2 lỗi cần biết:
-> (1) manifest Calico cài CNI conflist vào `/etc/cni/net.d/` chuẩn, nhưng kubelet của k3s chỉ đọc
-> `/var/lib/rancher/k3s/agent/etc/cni/net.d/` — phải copy thủ công + xóa `10-flannel.conflist` cũ;
-> (2) tương tự, binary `calico`/`calico-ipam` cài vào `/opt/cni/bin/` chuẩn nhưng k3s tìm ở
-> `/var/lib/rancher/k3s/data/cni/` — cũng phải copy thủ công. Ngoài ra, **test isolation phải chạy
-> từ trong 1 pod khác**, không phải `curl` từ máy host — NetworkPolicy chỉ áp cho traffic pod-to-pod,
-> traffic từ chính node host thường được miễn trừ mặc định (kể cả khi Calico hoạt động đúng), nên
-> test từ host luôn cho kết quả "không bị chặn" giả dù policy đã enforce đúng.
+> **Ghi chú bổ sung — CNI phải enforce NetworkPolicy thật, đừng giả định:** trên hạ tầng local cũ
+> (k3s), CNI mặc định flannel **hoàn toàn bỏ qua** object `NetworkPolicy` — đã kiểm chứng thực
+> nghiệm bằng policy deny-all, traffic vẫn lọt qua bình thường; phải đổi sang Calico mới có isolation
+> network thật (kèm 2 lỗi cấu hình CNI-path riêng của k3s lúc ghép Calico vào, xem lịch sử trong
+> `BAO_CAO_DU_AN.md` nếu cần). **Cụm cloud hiện tại (kubeadm) dùng Cilium, enforce `NetworkPolicy`
+> natively** — không cần cài thêm gì — nhưng bài học chung vẫn áp dụng: **luôn verify thực nghiệm
+> bằng policy thật, đừng suy đoán từ tên CNI.** Dù CNI nào, **test isolation phải chạy từ trong 1
+> pod khác**, không phải `curl` từ máy host — NetworkPolicy chỉ áp cho traffic pod-to-pod, traffic từ
+> chính node host thường được miễn trừ mặc định (kể cả khi policy hoạt động đúng), nên test từ host
+> luôn cho kết quả "không bị chặn" giả dù policy đã enforce đúng.
 
 > **Ghi chú bổ sung — đường rò rỉ qua k8s Event:** với các fault cần patch trực tiếp k8s resource
 > thay vì qua `/_fault` (VD case #6, hạ CPU limit), k8s Event sinh ra (bị `kubernetes-event-exporter`
@@ -142,7 +145,7 @@ k6                → sinh tải nền 20–50 rps
 | Log clustering | **tự implement Drain** (xem 6.3) | Go không có port drain3 trưởng thành |
 | HTTP framework | `net/http` + `chi` (hoặc stdlib thuần) | tránh framework nặng |
 | Load gen | k6 | |
-| Orchestration | k3s single-node (tắt traefik, servicelb) | |
+| Orchestration | kubeadm, 4 node (32 CPU/64Gi tổng) | ban đầu prototype trên k3s single-node (tắt traefik, servicelb); đã migrate cloud 2026-09-03 |
 
 **LLM chạy qua API** (Claude/GPT/Gemini). Không chạy model local ở đường chạy chính —
 CPU-only inference 3–8 tok/s sẽ biến mỗi lần suy luận thành 3–5 phút và làm hỏng vòng lặp thử nghiệm.
@@ -773,25 +776,31 @@ Case 13 là bài kiểm tra thật sự: hệ thống có xếp hạng được 
 
 ## 8. Ngân sách tài nguyên
 
-| Nhóm | Thành phần | CPU request | RAM limit |
+**Không còn là ngân sách chật hẹp** kể từ khi migrate lên cụm cloud (32 CPU/64Gi tổng, 4 node) —
+bảng dưới đây là **request** thực tế đang deploy (đã nới so với bản local ban đầu, xem
+`BAO_CAO_DU_AN.md` mục 9), không phải giới hạn cứng cần tối ưu tới từng Mi như trước. Vẫn giữ mức
+khiêm tốn có chủ đích vì cụm dùng chung với tenant khác.
+
+| Nhóm | Thành phần | CPU request | RAM request |
 |---|---|---|---|
-| workload | 6 service chain | 300m | 384Mi |
+| workload | 6 service chain | 600m (6×100m) | 1.5Gi (6×256Mi) |
 | | postgres + redis | 350m | 384Mi |
-| telemetry | otel-collector | 300m | 256Mi |
-| | clickhouse | 1000m | 1Gi |
-| | prometheus + alertmanager | 350m | 576Mi |
-| | grafana | 100m | 192Mi |
-| | jaeger (tùy chọn) | 100m | 200Mi |
-| | kube-state-metrics + event-exporter | 100m | 128Mi |
-| rca | orchestrator + context-builder | 300m | 384Mi |
-| fault-manager | fault-controller + evaluator + k6 | 600m | 320Mi |
-| hệ thống | k3s control plane | 1000m | 768Mi |
-| **Tổng** | ~21 pod | **≈ 4.5 CPU** | **≈ 4.6Gi** |
+| telemetry | otel-collector | 200m | 256Mi |
+| | clickhouse | 1000m | 2Gi |
+| | prometheus + alertmanager | 550m | 1.1Gi |
+| | grafana | 100m | 256Mi |
+| | kube-state-metrics + event-exporter + node-exporter (×4) + operator | ~350m | ~450Mi |
+| observability (gộp rca) | orchestrator | 100m | 128Mi |
+| fault-manager | k6 (nền, liên tục) | 100m | 64Mi |
+| **Tổng (nền, không tính Job faultctl/evaluator ngắn hạn)** | ~21-22 pod | **≈ 3.4 CPU** | **≈ 6.1Gi** |
 
-Đỉnh ngắn hạn 6–7 CPU khi ClickHouse merge partition hoặc context-builder chạy query.
-Trên máy 8 core vẫn thoải mái.
+Đỉnh ngắn hạn (ClickHouse merge partition, burst_load test) được cấp headroom rộng hơn nhiều lần so
+với request (xem `limits` trong từng file `deploy/`) — không còn cần ép sát tài nguyên như bản local
+ban đầu (dòng dưới đây giữ lại để hiểu bối cảnh quyết định thiết kế thời đó, không còn áp dụng):
 
-Nếu cần ép xuống dưới 3Gi: bỏ Jaeger, ClickHouse còn 768Mi, Prometheus retention 6h.
+> Bản local ban đầu (k3s single-node, 8-12 CPU/16GB): tổng ≈ 4.5 CPU / 4.6Gi RAM ở trạng thái nền,
+> đỉnh ngắn hạn 6-7 CPU. Nếu cần ép xuống dưới 3Gi: bỏ Jaeger, ClickHouse còn 768Mi, Prometheus
+> retention 6h.
 
 ---
 
@@ -841,7 +850,7 @@ Mono-repo Go, một `go.mod` ở gốc, nhiều binary trong `cmd/`. Package dù
 │   └── networkpolicy/         # cách ly fault-manager ↔ observability
 ├── scenarios/                 # 13 file YAML
 ├── loadtest/                  # k6 script
-└── CLAUDE.md
+└── PLAN.md
 ```
 
 ---
@@ -942,7 +951,7 @@ context_assertions:
   max_services_included: 6
 ```
 
-Dòng `must_not_include` là **bài kiểm tra tự động cho ràng buộc cách ly ở mục 2.4**. Nếu fault
+Dòng `must_not_include` là **bài kiểm tra tự động cho ràng buộc cách ly ở mục 2.3**. Nếu fault
 middleware vô tình để lộ dấu vết, test đỏ ngay thay vì phát hiện sau khi đã công bố kết quả.
 
 Chạy bằng `go test ./internal/builder/... -run TestScenarios` trên toàn bộ 13 fixture,
