@@ -1,0 +1,26 @@
+# Jaeger's Service Performance Monitoring (Monitor tab) hardcodes PromQL
+# templates expecting a "..._calls" counter with no suffix (confirmed via
+# Jaeger debug logs), but the OTel Prometheus exporter always appends
+# _total to counter metrics based on their type, regardless of the name
+# configured upstream (see otel-collector.yaml's spanmetrics connector
+# comment) — that mismatch can't be fixed on the collector side. This
+# recording rule aliases the real counter under the name Jaeger expects,
+# entirely inside Prometheus, without touching the collector pipeline.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jaeger-spm-recording-rules
+  namespace: observability
+  labels: {release: kube-prometheus-stack}
+spec:
+  groups:
+    - name: jaeger-spm
+      rules:
+        - record: traces_span_metrics_calls
+          expr: traces_span_metrics_calls_total
+        # Same mismatch for the histogram side: the spanmetrics connector's
+        # default unit (ms) bakes "_milliseconds_" into the metric name,
+        # but Jaeger's hardcoded query (confirmed via debug log) asks for
+        # "duration_bucket" with no unit infix.
+        - record: traces_span_metrics_duration_bucket
+          expr: traces_span_metrics_duration_milliseconds_bucket

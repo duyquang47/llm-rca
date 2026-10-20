@@ -19,12 +19,13 @@ alertmanager:
       requests: {cpu: 50m, memory: 128Mi}
       limits: {cpu: 200m, memory: 256Mi}
 
+# Disabled: Jaeger's own UI (trace list + Service Performance Monitoring)
+# covers this project's visualization needs without the overhead of
+# building/maintaining Grafana dashboards — see the 3 retired dashboard
+# ConfigMaps' backup under .grafana-dashboards-backup/ if this is ever
+# revisited.
 grafana:
-  resources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {cpu: 500m, memory: 512Mi}
-  adminPassword: admin
-  defaultDashboardsEnabled: false
+  enabled: false
 
 kube-state-metrics:
   resources:

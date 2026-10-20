@@ -1,0 +1,45 @@
+apiVersion: v1
+data:
+  orchestrator-logs.json: |
+    {
+      "id": null,
+      "uid": "llm-rca-orchestrator-logs",
+      "title": "llm-rca - Orchestrator Logs",
+      "tags": ["llm-rca"],
+      "timezone": "utc",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "time": {"from": "now-1h", "to": "now"},
+      "panels": [
+        {
+          "id": 1,
+          "type": "table",
+          "title": "Orchestrator logs (stdout, via log-shipper sidecar)",
+          "description": "Raw structured JSON log lines from the orchestrator container's stdout, shipped by its log-shipper sidecar into otel_logs (ServiceName=orchestrator).",
+          "gridPos": {"h": 24, "w": 24, "x": 0, "y": 0},
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+              "rawSql": "SELECT Timestamp, Body FROM otel.otel_logs WHERE ServiceName = 'orchestrator' ORDER BY Timestamp DESC LIMIT 500",
+              "format": 1
+            }
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []}
+        }
+      ]
+    }
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"orchestrator-logs.json":"{\n  \"id\": null,\n  \"uid\": \"llm-rca-orchestrator-logs\",\n  \"title\": \"llm-rca - Orchestrator Logs\",\n  \"tags\": [\"llm-rca\"],\n  \"timezone\": \"utc\",\n  \"schemaVersion\": 39,\n  \"version\": 1,\n  \"refresh\": \"10s\",\n  \"time\": {\"from\": \"now-1h\", \"to\": \"now\"},\n  \"panels\": [\n    {\n      \"id\": 1,\n      \"type\": \"table\",\n      \"title\": \"Orchestrator logs (stdout, via log-shipper sidecar)\",\n      \"description\": \"Raw structured JSON log lines from the orchestrator container's stdout, shipped by its log-shipper sidecar into otel_logs (ServiceName=orchestrator).\",\n      \"gridPos\": {\"h\": 24, \"w\": 24, \"x\": 0, \"y\": 0},\n      \"datasource\": {\"type\": \"grafana-clickhouse-datasource\", \"uid\": \"clickhouse\"},\n      \"targets\": [\n        {\n          \"refId\": \"A\",\n          \"datasource\": {\"type\": \"grafana-clickhouse-datasource\", \"uid\": \"clickhouse\"},\n          \"rawSql\": \"SELECT Timestamp, Body FROM otel.otel_logs WHERE ServiceName = 'orchestrator' ORDER BY Timestamp DESC LIMIT 500\",\n          \"format\": 1\n        }\n      ],\n      \"fieldConfig\": {\"defaults\": {}, \"overrides\": []}\n    }\n  ]\n}\n"},"kind":"ConfigMap","metadata":{"annotations":{},"creationTimestamp":null,"labels":{"grafana_dashboard":"1"},"name":"llm-rca-orchestrator-logs-dashboard","namespace":"observability"}}
+  creationTimestamp: "2026-09-21T04:12:13Z"
+  labels:
+    grafana_dashboard: "1"
+  name: llm-rca-orchestrator-logs-dashboard
+  namespace: observability
+  resourceVersion: "53678405"
+  uid: 755aa68b-0d96-4270-bcb9-ef927eec3f58

@@ -4,10 +4,50 @@
 #   kubectl create secret generic llm-api-keys -n observability \
 #     --from-literal=gemini-api-key=<key>
 #
-# Deployed into the observability namespace (rca was merged into it —
-# orchestrator has no k8s RBAC needs of its own, only talks to
-# ClickHouse/Prometheus over HTTP + the Gemini API, so there was no
-# isolation reason to keep it in a separate namespace).
+# Deployed into the observability namespace (rca was merged into it).
+#
+# log-shipper sidecar: orchestrator only logs structured JSON to
+# stdout, which otel-collector has no way to read directly (unlike
+# notify-worker, which exports logs via OTLP). Reuses the same
+# filelog-receiver-into-ClickHouse pipeline as k8s events instead of
+# building a whole Loki stack: the sidecar tails this pod's own stdout
+# via `kubectl logs -f` (RBAC below, scoped to get/list pods + get
+# pods/log in this namespace only) and appends it to orchestrator-logs-pvc,
+# which otel-collector's new filelog/orchestrator receiver tails —
+# see otel-collector.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orchestrator
+  namespace: observability
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orchestrator-logs
+  namespace: observability
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orchestrator-logs
+  namespace: observability
+subjects:
+  - kind: ServiceAccount
+    name: orchestrator
+    namespace: observability
+roleRef:
+  kind: Role
+  name: orchestrator-logs
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,9 +61,10 @@ spec:
     metadata:
       labels: {app: orchestrator}
     spec:
+      serviceAccountName: orchestrator
       containers:
         - name: orchestrator
-          image: docker.io/quang47/llm-rca-orchestrator:v1.0
+          image: docker.io/quang47/llm-rca-orchestrator:v2.1
           imagePullPolicy: Always
           env:
             - {name: CLICKHOUSE_ADDR, value: "clickhouse.observability:9000"}
@@ -44,11 +85,59 @@ spec:
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef: {name: llm-api-keys, key: gemini-api-key}
+            # This cluster's nodes have no direct route to the internet
+            # (isolated network) — only through the Squid proxy at
+            # 10.0.129.34:3128. Go's http.DefaultTransport reads
+            # HTTPS_PROXY via http.ProxyFromEnvironment automatically, so
+            # this alone is enough to route the Gemini call through it.
+            # NO_PROXY keeps in-cluster calls (ClickHouse/Prometheus, if
+            # ever proxied by mistake) direct.
+            - {name: HTTPS_PROXY, value: "http://10.0.129.34:3128"}
+            - {name: NO_PROXY, value: ".svc,.svc.cluster.local,10.244.0.0/16,10.96.0.0/12"}
           ports:
             - {containerPort: 8080, name: http}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 1000m, memory: 512Mi}
+        - name: log-shipper
+          image: bitnami/kubectl:latest
+          # bitnami images run as a non-root UID by default, which can't
+          # write to the local-path PVC's root-owned mount — this is
+          # just a log-tailing sidecar with no other privilege, so
+          # running it as root is the simplest fix.
+          securityContext:
+            runAsUser: 0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until kubectl get pod "$POD_NAME" -n "$POD_NAMESPACE" >/dev/null 2>&1; do sleep 1; done
+              # `kubectl logs -f` gets silently closed by the apiserver/kubelet's
+              # streaming idle timeout (~4h here, confirmed via restart-count-vs
+              # -pod-age math: 77 restarts over ~13 days). A bare `exec` made
+              # each reconnect replay the entire buffered container log from
+              # scratch into this file, which otel-collector's filelog receiver
+              # then re-ingested as duplicate rows in ClickHouse. Looping with a
+              # fresh --since-time on each reconnect means only log lines
+              # produced since the previous disconnect get re-fetched.
+              SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              while true; do
+                kubectl logs -f "$POD_NAME" -c orchestrator -n "$POD_NAMESPACE" --since-time="$SINCE" >> /var/log/orchestrator/orchestrator.log
+                SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                sleep 1
+              done
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          volumeMounts:
+            - {name: orchestrator-logs, mountPath: /var/log/orchestrator}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: orchestrator-logs
+          persistentVolumeClaim: {claimName: orchestrator-logs-pvc}
 ---
 apiVersion: v1
 kind: Service

@@ -118,11 +118,19 @@ spec:
     metadata:
       labels: {app: event-exporter}
     spec:
+      # Pinned to the same node as otel-collector: the events PVC is
+      # ReadWriteOnce + local-path (bound to whichever node otel-collector
+      # first landed on), so both pods must share that node. Also the only
+      # node this image was manually `ctr images import`-ed onto (ghcr.io
+      # unreachable from this cluster, no working mirror found either —
+      # see MIGRATE.md/REPORT.md for the registry situation).
+      nodeSelector:
+        kubernetes.io/hostname: db-esdata-worker-redis
       serviceAccountName: event-exporter
       containers:
         - name: event-exporter
           image: ghcr.io/resmoio/kubernetes-event-exporter:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           args: ["-conf=/etc/event-exporter/config.yaml"]
           volumeMounts:
             - {name: cfg, mountPath: /etc/event-exporter}

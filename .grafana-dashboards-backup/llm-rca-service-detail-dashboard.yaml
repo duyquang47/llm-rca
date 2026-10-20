@@ -1,0 +1,185 @@
+apiVersion: v1
+data:
+  service-detail.json: |
+    {
+      "id": null,
+      "uid": "llm-rca-service-detail",
+      "title": "llm-rca - Service Detail",
+      "tags": ["llm-rca"],
+      "timezone": "utc",
+      "schemaVersion": 39,
+      "version": 2,
+      "refresh": "10s",
+      "time": {"from": "now-30m", "to": "now"},
+      "templating": {
+        "list": [
+          {
+            "name": "service",
+            "type": "query",
+            "label": "Service",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "query": {"query": "label_values(traces_service_graph_request_total{connection_type!=\"virtual_node\"}, server)", "refId": "service-var"},
+            "refresh": 2,
+            "includeAll": false,
+            "multi": false,
+            "sort": 1
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Request rate (as server)",
+          "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 1}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+             "expr": "sum(rate(traces_service_graph_request_total{server=\"$service\",connection_type!=\"virtual_node\"}[5m]))"}
+          ]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Error rate (as server)",
+          "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 5}
+          ]}}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+             "expr": "100 * sum(rate(traces_service_graph_request_total{server=\"$service\",failed=\"true\",connection_type!=\"virtual_node\"}[5m])) / sum(rate(traces_service_graph_request_total{server=\"$service\",connection_type!=\"virtual_node\"}[5m]))"}
+          ]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Latency p95 (as server)",
+          "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+             "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\"$service\"}[5m])))"}
+          ]
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Latency p99 (as server)",
+          "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"},
+             "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\"$service\"}[5m])))"}
+          ]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Request rate over time (as server)",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "legendFormat": "req/s",
+             "expr": "sum(rate(traces_service_graph_request_total{server=\"$service\",connection_type!=\"virtual_node\"}[5m]))"},
+            {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "legendFormat": "error/s",
+             "expr": "sum(rate(traces_service_graph_request_total{server=\"$service\",failed=\"true\",connection_type!=\"virtual_node\"}[5m]))"}
+          ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Latency percentiles over time (as server)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "legendFormat": "p50",
+             "expr": "histogram_quantile(0.50, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\"$service\"}[5m])))"},
+            {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "legendFormat": "p95",
+             "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\"$service\"}[5m])))"},
+            {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "legendFormat": "p99",
+             "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\"$service\"}[5m])))"}
+          ]
+        },
+        {
+          "id": 7,
+          "type": "table",
+          "title": "Inbound callers (who calls $service)",
+          "description": "req/s and error rate per caller, server=$service",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "format": "table", "instant": true, "datasource": {"type": "prometheus", "uid": "prometheus"},
+             "expr": "sum by (client) (rate(traces_service_graph_request_total{server=\"$service\",connection_type!=\"virtual_node\"}[5m]))"}
+          ],
+          "transformations": [{"id": "renameByRegex", "options": {"regex": "^Value$", "renamePattern": "req/s"}}],
+          "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}, "overrides": []}
+        },
+        {
+          "id": 8,
+          "type": "table",
+          "title": "Outbound calls (what $service calls)",
+          "description": "req/s per callee, client=$service",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "format": "table", "instant": true, "datasource": {"type": "prometheus", "uid": "prometheus"},
+             "expr": "sum by (server) (rate(traces_service_graph_request_total{client=\"$service\",connection_type!=\"virtual_node\"}[5m]))"}
+          ],
+          "transformations": [{"id": "renameByRegex", "options": {"regex": "^Value$", "renamePattern": "req/s"}}],
+          "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}, "overrides": []}
+        },
+        {
+          "id": 9,
+          "type": "table",
+          "title": "Recent traces ($service)",
+          "description": "Last 200 spans from otel_traces where ServiceName = $service",
+          "gridPos": {"h": 9, "w": 24, "x": 0, "y": 22},
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+              "rawSql": "SELECT Timestamp, TraceId, SpanId, ParentSpanId, SpanName, Duration/1000000 AS duration_ms, StatusCode FROM otel.otel_traces WHERE ServiceName = '$service' ORDER BY Timestamp DESC LIMIT 200",
+              "format": 1
+            }
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []}
+        },
+        {
+          "id": 10,
+          "type": "table",
+          "title": "Recent logs ($service)",
+          "description": "Last 200 log records from otel_logs where ServiceName = $service. Note: only services that export logs via OTLP will have data here (currently only notify-worker in this demo).",
+          "gridPos": {"h": 9, "w": 24, "x": 0, "y": 31},
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+              "rawSql": "SELECT Timestamp, SeverityText, Body FROM otel.otel_logs WHERE ServiceName = '$service' ORDER BY Timestamp DESC LIMIT 200",
+              "format": 1
+            }
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []}
+        }
+      ]
+    }
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"service-detail.json":"{\n  \"id\": null,\n  \"uid\": \"llm-rca-service-detail\",\n  \"title\": \"llm-rca - Service Detail\",\n  \"tags\": [\"llm-rca\"],\n  \"timezone\": \"utc\",\n  \"schemaVersion\": 39,\n  \"version\": 2,\n  \"refresh\": \"10s\",\n  \"time\": {\"from\": \"now-30m\", \"to\": \"now\"},\n  \"templating\": {\n    \"list\": [\n      {\n        \"name\": \"service\",\n        \"type\": \"query\",\n        \"label\": \"Service\",\n        \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n        \"query\": {\"query\": \"label_values(traces_service_graph_request_total{connection_type!=\\\"virtual_node\\\"}, server)\", \"refId\": \"service-var\"},\n        \"refresh\": 2,\n        \"includeAll\": false,\n        \"multi\": false,\n        \"sort\": 1\n      }\n    ]\n  },\n  \"panels\": [\n    {\n      \"id\": 1,\n      \"type\": \"stat\",\n      \"title\": \"Request rate (as server)\",\n      \"gridPos\": {\"h\": 6, \"w\": 6, \"x\": 0, \"y\": 0},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"reqps\", \"decimals\": 1}, \"overrides\": []},\n      \"targets\": [\n        {\"refId\": \"A\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n         \"expr\": \"sum(rate(traces_service_graph_request_total{server=\\\"$service\\\",connection_type!=\\\"virtual_node\\\"}[5m]))\"}\n      ]\n    },\n    {\n      \"id\": 2,\n      \"type\": \"stat\",\n      \"title\": \"Error rate (as server)\",\n      \"gridPos\": {\"h\": 6, \"w\": 6, \"x\": 6, \"y\": 0},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"percent\", \"decimals\": 2, \"thresholds\": {\"mode\": \"absolute\", \"steps\": [\n        {\"color\": \"green\", \"value\": null}, {\"color\": \"orange\", \"value\": 1}, {\"color\": \"red\", \"value\": 5}\n      ]}}, \"overrides\": []},\n      \"targets\": [\n        {\"refId\": \"A\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n         \"expr\": \"100 * sum(rate(traces_service_graph_request_total{server=\\\"$service\\\",failed=\\\"true\\\",connection_type!=\\\"virtual_node\\\"}[5m])) / sum(rate(traces_service_graph_request_total{server=\\\"$service\\\",connection_type!=\\\"virtual_node\\\"}[5m]))\"}\n      ]\n    },\n    {\n      \"id\": 3,\n      \"type\": \"stat\",\n      \"title\": \"Latency p95 (as server)\",\n      \"gridPos\": {\"h\": 6, \"w\": 6, \"x\": 12, \"y\": 0},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"s\", \"decimals\": 3}, \"overrides\": []},\n      \"targets\": [\n        {\"refId\": \"A\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n         \"expr\": \"histogram_quantile(0.95, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\\\"$service\\\"}[5m])))\"}\n      ]\n    },\n    {\n      \"id\": 4,\n      \"type\": \"stat\",\n      \"title\": \"Latency p99 (as server)\",\n      \"gridPos\": {\"h\": 6, \"w\": 6, \"x\": 18, \"y\": 0},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"s\", \"decimals\": 3}, \"overrides\": []},\n      \"targets\": [\n        {\"refId\": \"A\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n         \"expr\": \"histogram_quantile(0.99, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\\\"$service\\\"}[5m])))\"}\n      ]\n    },\n    {\n      \"id\": 5,\n      \"type\": \"timeseries\",\n      \"title\": \"Request rate over time (as server)\",\n      \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 0, \"y\": 6},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"reqps\"}, \"overrides\": []},\n      \"targets\": [\n        {\"refId\": \"A\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"}, \"legendFormat\": \"req/s\",\n         \"expr\": \"sum(rate(traces_service_graph_request_total{server=\\\"$service\\\",connection_type!=\\\"virtual_node\\\"}[5m]))\"},\n        {\"refId\": \"B\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"}, \"legendFormat\": \"error/s\",\n         \"expr\": \"sum(rate(traces_service_graph_request_total{server=\\\"$service\\\",failed=\\\"true\\\",connection_type!=\\\"virtual_node\\\"}[5m]))\"}\n      ]\n    },\n    {\n      \"id\": 6,\n      \"type\": \"timeseries\",\n      \"title\": \"Latency percentiles over time (as server)\",\n      \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 12, \"y\": 6},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"s\"}, \"overrides\": []},\n      \"targets\": [\n        {\"refId\": \"A\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"}, \"legendFormat\": \"p50\",\n         \"expr\": \"histogram_quantile(0.50, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\\\"$service\\\"}[5m])))\"},\n        {\"refId\": \"B\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"}, \"legendFormat\": \"p95\",\n         \"expr\": \"histogram_quantile(0.95, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\\\"$service\\\"}[5m])))\"},\n        {\"refId\": \"C\", \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"}, \"legendFormat\": \"p99\",\n         \"expr\": \"histogram_quantile(0.99, sum by (le) (rate(traces_service_graph_request_server_seconds_bucket{server=\\\"$service\\\"}[5m])))\"}\n      ]\n    },\n    {\n      \"id\": 7,\n      \"type\": \"table\",\n      \"title\": \"Inbound callers (who calls $service)\",\n      \"description\": \"req/s and error rate per caller, server=$service\",\n      \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 0, \"y\": 14},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"targets\": [\n        {\"refId\": \"A\", \"format\": \"table\", \"instant\": true, \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n         \"expr\": \"sum by (client) (rate(traces_service_graph_request_total{server=\\\"$service\\\",connection_type!=\\\"virtual_node\\\"}[5m]))\"}\n      ],\n      \"transformations\": [{\"id\": \"renameByRegex\", \"options\": {\"regex\": \"^Value$\", \"renamePattern\": \"req/s\"}}],\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"reqps\", \"decimals\": 2}, \"overrides\": []}\n    },\n    {\n      \"id\": 8,\n      \"type\": \"table\",\n      \"title\": \"Outbound calls (what $service calls)\",\n      \"description\": \"req/s per callee, client=$service\",\n      \"gridPos\": {\"h\": 8, \"w\": 12, \"x\": 12, \"y\": 14},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"targets\": [\n        {\"refId\": \"A\", \"format\": \"table\", \"instant\": true, \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n         \"expr\": \"sum by (server) (rate(traces_service_graph_request_total{client=\\\"$service\\\",connection_type!=\\\"virtual_node\\\"}[5m]))\"}\n      ],\n      \"transformations\": [{\"id\": \"renameByRegex\", \"options\": {\"regex\": \"^Value$\", \"renamePattern\": \"req/s\"}}],\n      \"fieldConfig\": {\"defaults\": {\"unit\": \"reqps\", \"decimals\": 2}, \"overrides\": []}\n    },\n    {\n      \"id\": 9,\n      \"type\": \"table\",\n      \"title\": \"Recent traces ($service)\",\n      \"description\": \"Last 200 spans from otel_traces where ServiceName = $service\",\n      \"gridPos\": {\"h\": 9, \"w\": 24, \"x\": 0, \"y\": 22},\n      \"datasource\": {\"type\": \"grafana-clickhouse-datasource\", \"uid\": \"clickhouse\"},\n      \"targets\": [\n        {\n          \"refId\": \"A\",\n          \"datasource\": {\"type\": \"grafana-clickhouse-datasource\", \"uid\": \"clickhouse\"},\n          \"rawSql\": \"SELECT Timestamp, TraceId, SpanId, ParentSpanId, SpanName, Duration/1000000 AS duration_ms, StatusCode FROM otel.otel_traces WHERE ServiceName = '$service' ORDER BY Timestamp DESC LIMIT 200\",\n          \"format\": 1\n        }\n      ],\n      \"fieldConfig\": {\"defaults\": {}, \"overrides\": []}\n    },\n    {\n      \"id\": 10,\n      \"type\": \"table\",\n      \"title\": \"Recent logs ($service)\",\n      \"description\": \"Last 200 log records from otel_logs where ServiceName = $service. Note: only services that export logs via OTLP will have data here (currently only notify-worker in this demo).\",\n      \"gridPos\": {\"h\": 9, \"w\": 24, \"x\": 0, \"y\": 31},\n      \"datasource\": {\"type\": \"grafana-clickhouse-datasource\", \"uid\": \"clickhouse\"},\n      \"targets\": [\n        {\n          \"refId\": \"A\",\n          \"datasource\": {\"type\": \"grafana-clickhouse-datasource\", \"uid\": \"clickhouse\"},\n          \"rawSql\": \"SELECT Timestamp, SeverityText, Body FROM otel.otel_logs WHERE ServiceName = '$service' ORDER BY Timestamp DESC LIMIT 200\",\n          \"format\": 1\n        }\n      ],\n      \"fieldConfig\": {\"defaults\": {}, \"overrides\": []}\n    }\n  ]\n}\n"},"kind":"ConfigMap","metadata":{"annotations":{},"creationTimestamp":null,"labels":{"grafana_dashboard":"1"},"name":"llm-rca-service-detail-dashboard","namespace":"observability"}}
+  creationTimestamp: "2026-09-21T02:11:03Z"
+  labels:
+    grafana_dashboard: "1"
+  name: llm-rca-service-detail-dashboard
+  namespace: observability
+  resourceVersion: "53667396"
+  uid: 2166fb53-4eae-4389-ab9d-26b44d14eb27

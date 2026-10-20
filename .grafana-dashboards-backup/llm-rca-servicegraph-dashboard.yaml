@@ -1,0 +1,75 @@
+apiVersion: v1
+data:
+  servicegraph.json: |
+    {
+      "id": null,
+      "uid": "llm-rca-servicegraph",
+      "title": "llm-rca - Service Graph (live)",
+      "tags": ["llm-rca"],
+      "timezone": "utc",
+      "schemaVersion": 39,
+      "version": 10,
+      "refresh": "10s",
+      "time": {"from": "now-15m", "to": "now"},
+      "panels": [
+        {
+          "id": 1,
+          "type": "nodeGraph",
+          "title": "demo namespace - service call graph (req/s over last 5m)",
+          "description": "Node = mainStat is total req/s touching that service (as client + server). Edge = mainStat is req/s on that call path. Source: otel-collector's servicegraph connector, built from live span parent/child pairs (same relation as internal/telemetry/clickhouse/source.go's DependencyGraph()).",
+          "gridPos": {"h": 20, "w": 24, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {
+              "refId": "edges",
+              "format": "table",
+              "instant": true,
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "label_replace(label_replace(label_join(sum by (client, server) (rate(traces_service_graph_request_total{connection_type!=\"virtual_node\"}[5m])), \"id\", \"_\", \"client\", \"server\"), \"source\", \"$1\", \"client\", \"(.*)\"), \"target\", \"$1\", \"server\", \"(.*)\")"
+            },
+            {
+              "refId": "nodes",
+              "format": "table",
+              "instant": true,
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "sum by (id, mainStat) (label_replace(label_replace(sum by (client) (rate(traces_service_graph_request_total{connection_type!=\"virtual_node\"}[5m])), \"id\", \"$1\", \"client\", \"(.*)\"), \"mainStat\", \"$1\", \"client\", \"(.*)\") or label_replace(label_replace(sum by (server) (rate(traces_service_graph_request_total{connection_type!=\"virtual_node\"}[5m])), \"id\", \"$1\", \"server\", \"(.*)\"), \"mainStat\", \"$1\", \"server\", \"(.*)\"))"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 1
+            },
+            "overrides": [
+              {
+                "matcher": {"id": "byName", "options": "id"},
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "title": "Xem chi tiết service",
+                        "url": "/d/llm-rca-service-detail/llm-rca-service-detail?var-service=${__data.fields.id}",
+                        "targetBlank": false
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"servicegraph.json":"{\n  \"id\": null,\n  \"uid\": \"llm-rca-servicegraph\",\n  \"title\": \"llm-rca - Service Graph (live)\",\n  \"tags\": [\"llm-rca\"],\n  \"timezone\": \"utc\",\n  \"schemaVersion\": 39,\n  \"version\": 10,\n  \"refresh\": \"10s\",\n  \"time\": {\"from\": \"now-15m\", \"to\": \"now\"},\n  \"panels\": [\n    {\n      \"id\": 1,\n      \"type\": \"nodeGraph\",\n      \"title\": \"demo namespace - service call graph (req/s over last 5m)\",\n      \"description\": \"Node = mainStat is total req/s touching that service (as client + server). Edge = mainStat is req/s on that call path. Source: otel-collector's servicegraph connector, built from live span parent/child pairs (same relation as internal/telemetry/clickhouse/source.go's DependencyGraph()).\",\n      \"gridPos\": {\"h\": 20, \"w\": 24, \"x\": 0, \"y\": 0},\n      \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n      \"targets\": [\n        {\n          \"refId\": \"edges\",\n          \"format\": \"table\",\n          \"instant\": true,\n          \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n          \"expr\": \"label_replace(label_replace(label_join(sum by (client, server) (rate(traces_service_graph_request_total{connection_type!=\\\"virtual_node\\\"}[5m])), \\\"id\\\", \\\"_\\\", \\\"client\\\", \\\"server\\\"), \\\"source\\\", \\\"$1\\\", \\\"client\\\", \\\"(.*)\\\"), \\\"target\\\", \\\"$1\\\", \\\"server\\\", \\\"(.*)\\\")\"\n        },\n        {\n          \"refId\": \"nodes\",\n          \"format\": \"table\",\n          \"instant\": true,\n          \"datasource\": {\"type\": \"prometheus\", \"uid\": \"prometheus\"},\n          \"expr\": \"sum by (id, mainStat) (label_replace(label_replace(sum by (client) (rate(traces_service_graph_request_total{connection_type!=\\\"virtual_node\\\"}[5m])), \\\"id\\\", \\\"$1\\\", \\\"client\\\", \\\"(.*)\\\"), \\\"mainStat\\\", \\\"$1\\\", \\\"client\\\", \\\"(.*)\\\") or label_replace(label_replace(sum by (server) (rate(traces_service_graph_request_total{connection_type!=\\\"virtual_node\\\"}[5m])), \\\"id\\\", \\\"$1\\\", \\\"server\\\", \\\"(.*)\\\"), \\\"mainStat\\\", \\\"$1\\\", \\\"server\\\", \\\"(.*)\\\"))\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"reqps\",\n          \"decimals\": 1\n        },\n        \"overrides\": [\n          {\n            \"matcher\": {\"id\": \"byName\", \"options\": \"id\"},\n            \"properties\": [\n              {\n                \"id\": \"links\",\n                \"value\": [\n                  {\n                    \"title\": \"Xem chi tiết service\",\n                    \"url\": \"/d/llm-rca-service-detail/llm-rca-service-detail?var-service=${__data.fields.id}\",\n                    \"targetBlank\": false\n                  }\n                ]\n              }\n            ]\n          }\n        ]\n      }\n    }\n  ]\n}\n"},"kind":"ConfigMap","metadata":{"annotations":{},"creationTimestamp":null,"labels":{"grafana_dashboard":"1"},"name":"llm-rca-servicegraph-dashboard","namespace":"observability"}}
+  creationTimestamp: "2026-09-19T04:26:58Z"
+  labels:
+    grafana_dashboard: "1"
+  name: llm-rca-servicegraph-dashboard
+  namespace: observability
+  resourceVersion: "53668928"
+  uid: ad9a1ada-ed9c-40b9-943e-4a80a9e94fb6

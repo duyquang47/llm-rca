@@ -30,7 +30,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: docker.io/quang47/llm-rca-chain-service:v1.0
+          image: docker.io/quang47/llm-rca-chain-service:v1.1
           imagePullPolicy: Always
           env:
             - {name: CONFIG_PATH, value: /etc/chain/config.yaml}

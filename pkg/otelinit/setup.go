@@ -100,7 +100,15 @@ func Setup(ctx context.Context, cfg Config) (Logger, Shutdown, error) {
 	)
 	otel.SetMeterProvider(meterProvider)
 
-	logger := slog.New(otelslog.NewHandler(cfg.ServiceName, otelslog.WithLoggerProvider(loggerProvider)))
+	// Mirrors every log record onto the active span as a span event, so
+	// Jaeger's per-span "Logs" tab (already part of its UI, no Jaeger-side
+	// config needed) shows the same log lines ClickHouse gets — without
+	// this, Jaeger has no way to show log data at all, since it has no
+	// log-search UI of its own and only renders logs that arrive as span
+	// events. Wraps rather than replaces the otelslog handler so the
+	// existing ClickHouse-bound log pipeline (otel-collector.yaml's logs
+	// pipeline) is completely unaffected.
+	logger := slog.New(newSpanEventHandler(otelslog.NewHandler(cfg.ServiceName, otelslog.WithLoggerProvider(loggerProvider))))
 
 	shutdown := func(ctx context.Context) error {
 		var errs []error

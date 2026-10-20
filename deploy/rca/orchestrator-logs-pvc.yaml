@@ -1,0 +1,15 @@
+# Shared log file between orchestrator's log-shipper sidecar (writer)
+# and otel-collector's filelog receiver (reader). Same pattern as
+# k8s-events-pvc.yaml: RWO + local-path's WaitForFirstConsumer binding
+# forces both Deployments onto the same node automatically, no manual
+# nodeSelector needed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestrator-logs-pvc
+  namespace: observability
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 1Gi}
