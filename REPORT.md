@@ -1,9 +1,11 @@
 # Báo cáo dự án: LLM-based RCA cho hệ thống microservices
 
 **Thời gian thực hiện:** 2026-08-19 → 2026-08-25 (Giai đoạn 1, local, 7 ngày, 44 commit); tiếp tục
-2026-09-03 (Giai đoạn 2, migrate cloud — xem mục 9)
-**Trạng thái:** 13/13 kịch bản lỗi đã được xác thực end-to-end trên cả local (Giai đoạn 1 hoàn tất
-theo PLAN.md §10) và trên hạ tầng cloud thật sau migrate (mục 9)
+2026-09-03 (Giai đoạn 2, migrate cloud 4-node — xem mục 9); tiếp tục 2026-09-18 → nay (Giai đoạn 3,
+triển khai lại trên cụm production 3-node dùng chung, mạng cô lập — xem mục 10)
+**Trạng thái:** 13/13 kịch bản lỗi đã được xác thực end-to-end trên local (Giai đoạn 1), trên cụm
+cloud 4-node cũ (mục 9, **nay không còn là cụm đang chạy**), và trên cụm production 3-node hiện tại
+(mục 10, **cụm đang chạy thật lúc viết báo cáo này**)
 
 ---
 
@@ -415,6 +417,10 @@ trên môi trường multi-node/multi-tenant thật. Xem chi tiết đầy đủ
 
 ## 9. Giai đoạn 2 — Migrate lên hạ tầng Cloud (2026-09-03)
 
+> **Lưu ý (mục 10):** cụm 4-node mô tả trong mục này **không còn là cụm đang chạy** — dự án đã triển
+> khai lại từ đầu trên một cụm production 3-node khác, dùng chung với tenant khác, mạng cô lập hoàn
+> toàn (không có route Internet trực tiếp). Xem mục 10 cho hiện trạng thật.
+
 Chuyển toàn bộ hệ thống từ k3s single-node (WSL2, ~4.5 CPU/4.6Gi) sang cụm **kubeadm thật, 4 node**
 (`k8s-vm-01..04`, mỗi node 8 CPU/16Gi, tổng 32 CPU/64Gi), dùng chung với các workload khác không
 liên quan (n8n, keycloak, dbaas-operator...). Checklist trước-khi-migrate nằm ở
@@ -515,6 +521,155 @@ hiện, đúng tinh thần "báo cáo về những gì đã làm" của tài li�
   ngay sau khi faultctl vừa xong Job gần như luôn báo "no incident found" giả; phải đợi ~2-3 phút
   (đủ cho `for:30s` + `group_wait` + `collectionWindow` 20s + phân tích).
 - `kubectl logs --since=Xm` không đáng tin để tra log gần đây trên cụm này — dùng `--tail=N` thay thế.
+
+---
+
+## 10. Giai đoạn 3 — Triển khai lại trên cụm production dùng chung, mạng cô lập (2026-09-18 → nay)
+
+Cụm 4-node ở mục 9 không còn được dùng. Dự án được triển khai lại **từ trạng thái cụm hoàn toàn
+trống** lên một cụm Kubernetes production thật, dùng chung với các tenant không liên quan
+(`qrpaysound`, `vso`, `consul`, `keycloak`), và — khác biệt lớn nhất so với mọi lần trước — **không
+có route Internet trực tiếp từ bất kỳ node nào**.
+
+### 10.1. Hạ tầng cụm
+
+| | |
+|---|---|
+| Số node | 3: `redis-esdata-master` (control-plane), `db-esdata-worker-redis`, `db-kafka-worker` (worker) |
+| CNI | Calico |
+| Container runtime | containerd |
+| Namespace dự án | `demo` / `observability` / `fault-manager` (giữ nguyên cấu trúc 3 namespace từ mục 9.1) |
+| Mạng | Cô lập hoàn toàn — node không tự pull được từ `docker.io`/`quay.io`/`ghcr.io`/`registry.k8s.io` |
+| Đường ra ngoài duy nhất | Nexus mirror nội bộ `nxrm-dso.mobifone.vn` (prefix `/dockerhub/<image>`, `/quayio/<image>` — **không tìm được** prefix nào hoạt động cho `ghcr.io`/`registry.k8s.io`) và Squid forward-proxy `10.0.129.34:3128` cho Internet tuỳ ý (`helm repo`, `helm pull`, gọi API Gemini, tải Grafana plugin) |
+
+### 10.2. Triển khai từ đầu — các blocker hạ tầng gặp phải và cách xử lý
+
+Cụm này **hoàn toàn trống** lúc bắt đầu (không StorageClass, không image nào sẵn có) — khác mục 9
+(nơi cụm cloud 4-node đã có sẵn StorageClass/registry hoạt động bình thường):
+
+1. **Không có StorageClass mặc định** → cài `local-path-provisioner` (rancher) làm StorageClass mặc
+   định, sau khi xin phép người dùng (thay đổi hạ tầng dùng chung).
+2. **3 image không có mirror nào hoạt động** (`ghcr.io/resmoio/kubernetes-event-exporter:latest`,
+   `ghcr.io/jkroepke/kube-webhook-certgen:1.8.8`,
+   `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0`) — người dùng tự `docker pull` +
+   `docker save` trên máy có Internet, `scp` lên cả 2 worker node, `ctr images import` thủ công.
+3. **kube-prometheus-stack** (Prometheus/Alertmanager/Grafana/node-exporter) cần override
+   `image.registry` cho từng subchart trỏ về Nexus mirror (`deploy/observability/kube-prometheus-stack-mirror-values.yaml`,
+   file mới) — `kubectl set image` không đủ vì Deployment do operator quản lý tự revert lại. *(Cập
+   nhật 2026-09-21: sau khi containerd trên cả 3 node được cấu hình proxy Internet thật, override này
+   hết cần thiết — file đã bị xóa, xem mục 10.7.)*
+4. **`helm install`/`helm upgrade` bị Claude Code's permission classifier chặn** → hướng dẫn người
+   dùng tự thêm quyền vào `.claude/settings.local.json`.
+
+### 10.3. Hai bug hạ tầng nghiêm trọng, chưa từng gặp ở mục 6/9 — phát hiện lần đầu ở cụm này
+
+1. **Lệch giờ ~10 phút giữa các node làm Alertmanager coi mọi alert là đã resolved ngay khi nhận**
+   — `db-esdata-worker-redis` không hề chạy daemon NTP nào, đồng hồ lệch ~600s so với 2 node còn
+   lại. `EndsAt` của mỗi alert được Prometheus (đồng hồ sai) tính từ chính đồng hồ của nó; Alertmanager
+   (đồng hồ đúng hơn) nhận alert với `EndsAt` đã nằm trong quá khứ → coi là `resolved` ngay lập tức,
+   không bao giờ chuyển sang `firing`. Phát hiện qua
+   `alertmanager_alerts_received_total{status="resolved"}` tăng liên tục trong khi `{status="firing"}`
+   luôn bằng 0. Đây là lỗi **âm thầm chặn 100% pipeline alert → orchestrator**, không hề có trong
+   `REPORT.md` trước đây vì cụm mục 9 không có vấn đề đồng hồ này. Sửa: cài `chrony`, biến
+   `redis-esdata-master` thành NTP server nội bộ (`allow`, `local stratum 10` trong `chrony.conf`, đã
+   xin phép người dùng trước khi sửa file hệ thống), trỏ 2 node còn lại vào đó.
+2. **Gọi Gemini API bị timeout** — cụm không có route Internet trực tiếp, orchestrator gọi thẳng
+   `generativelanguage.googleapis.com` nên luôn `i/o timeout`. Sửa: thêm `HTTPS_PROXY`/`NO_PROXY` vào
+   `deploy/rca/orchestrator.yaml` — Go's `http.ProxyFromEnvironment` tự đọc, không cần sửa code.
+
+### 10.4. Chạy lại 13 kịch bản trên cụm mới (2026-09-18)
+
+Sau khi vá 2 bug ở mục 10.3, chạy lại toàn bộ 13 kịch bản với khoảng cách ~6-10 phút giữa mỗi kịch
+bản (dài hơn mức ~2-3 phút dùng ở mục 9.4 — cửa sổ gom nhóm 5 phút của `internal/incident.Grouper`
+tính từ lần alert cuối, không phải lúc fault kết thúc, nên khoảng cách ngắn hơn từng làm gộp nhầm 2
+kịch bản liên tiếp vào 1 incident ngay trong lần chạy này).
+
+Theo dữ liệu thật ghi trong bảng `otel.incidents` (`score_top1`/`score_mrr`, 12 hàng ứng với batch
+chạy ngày 18/9): **9/12 đạt `top1=1.0`, 2/12 `top1=0`, 1/12 `top1=0.5`** — cùng dạng phân bố với kết
+quả cụm cũ ở mục 9.3 (đa số PASS, một số case chạm giới hạn hiệu chỉnh môi trường hoặc phương sai tự
+nhiên của LLM). **Ghi chú quan trọng:** bảng `otel.incidents` **không lưu `ground_truth`** (đúng
+nguyên tắc cách ly ở mục 1 — ground truth có kho riêng, không đi qua ClickHouse), nên không thể tự
+đối chiếu ngược lại chính xác hàng nào ứng với kịch bản nào chỉ từ truy vấn ClickHouse; log gốc của
+từng Job `evaluator-scenarioN` tại thời điểm chạy là nguồn chính xác nếu cần bảng chi tiết như mục
+9.3 — chưa được lưu lại riêng trong lần cập nhật báo cáo này.
+
+### 10.5. Sự cố tự gây ra trong lúc làm dashboard (2026-09-21) — bài học vận hành
+
+Khi `helm upgrade` để thêm plugin ClickHouse cho Grafana, quên kèm `-f deploy/rca/alertmanager-values.yaml`
+→ Helm reset route Alertmanager về mặc định (chỉ còn receiver `"null"`), **âm thầm mất route
+`orchestrator-webhook` suốt từ 2026-09-18 đến 2026-09-21** mà không có triệu chứng gì rõ ràng (không
+lỗi, không alert nào báo) — chỉ lộ ra khi người dùng chạy thử kịch bản và thấy orchestrator không có
+log mới. Root-cause qua `alertmanager_notifications_total{integration="webhook"}` đứng yên bất kể
+alert có `firing` thật (`ALERTS{alertname="HighP99Latency"}` xác nhận rule vẫn fire đúng, chỉ là
+không có đường nào gửi tới orchestrator). Sửa bằng cách luôn `helm upgrade` với **đủ cả 3 file
+values** (`kube-prometheus-stack-values.yaml` + `kube-prometheus-stack-mirror-values.yaml` +
+`alertmanager-values.yaml`) cùng lúc, không tách lẻ.
+
+Bug liên quan cùng nguyên nhân gốc (proxy env thiếu `NO_PROXY` phù hợp): thêm `HTTPS_PROXY`/`HTTP_PROXY`
+vào Grafana (để cài plugin) khiến Grafana tự động proxy hoá luôn cả các cuộc gọi tới Prometheus nội
+bộ (`kube-prometheus-stack-prometheus.observability:9090`, dạng `service.namespace` không khớp
+`NO_PROXY=".svc,..."` cũ) → 403 qua Squid → panel Service Graph lỗi "id field is required for nodes
+data frame". Sửa: thêm `.observability` vào `NO_PROXY`.
+
+**Bài học chung:** trên cụm dùng chung, mạng cô lập này, mọi `helm upgrade` phải áp dụng **toàn bộ**
+bộ values file liên quan tới release đó, và mọi proxy env thêm vào một Deployment cần rà lại
+`NO_PROXY` cho **tất cả** các đích nội bộ mà Deployment đó gọi tới, không chỉ đích cần proxy vì lý do
+ban đầu.
+
+### 10.6. Tính năng vận hành mới thêm trên cụm này (chưa từng có ở mục 6/9)
+
+- **ClickHouse qua NodePort** (`30900` native / `30823` HTTP) — truy cập trực tiếp bằng DBeaver từ
+  ngoài cụm, không cần `kubectl port-forward`.
+- **Service graph trực quan, live** trong Grafana: connector `servicegraph` của otel-collector (từ
+  span parent/child thật — cùng quan hệ `internal/telemetry/clickhouse/source.go`'s `DependencyGraph()`
+  tính bằng SQL) → Prometheus → Node Graph panel, tên service hiển thị ngay trên node, click vào node
+  chuyển sang dashboard chi tiết đúng service đó.
+- **Dashboard "Service Detail"** (biến `$service`): request rate/error rate/latency p95-p99 theo
+  từng service, bảng inbound/outbound call — cộng thêm **bảng traces và logs thật** đọc trực tiếp từ
+  ClickHouse qua plugin `grafana-clickhouse-datasource` (v4.21.3, cài qua Squid proxy) — lưu ý logs
+  hiện chỉ có dữ liệu thật cho `notify-worker` (service duy nhất export log qua OTLP; các service demo
+  khác chưa làm, không phải lỗi dashboard).
+- **Log của chính `orchestrator`** (trước đây chỉ xem được qua `kubectl logs`) giờ cũng vào được
+  ClickHouse/Grafana: sidecar `log-shipper` (`kubectl logs -f` + RBAC hẹp, chỉ đọc log pod của chính
+  nó) ghi vào PVC dùng chung với otel-collector's filelog receiver mới (gắn `service.name=orchestrator`),
+  hiển thị ở dashboard riêng "Orchestrator Logs".
+
+### 10.7. Bỏ mirror Nexus, chuyển sang pull trực tiếp từ registry thật (2026-09-21)
+
+Cấu hình lại proxy Internet ở cả 2 tầng vốn tách biệt hoàn toàn (nhầm lẫn ban đầu giữa 2 tầng này
+từng khiến lần kiểm tra đầu tiên báo sai "đã pull được"):
+
+- **Docker daemon trên máy build** (`dockerd`) — không có quyền sudo để sửa
+  `/etc/systemd/system/docker.service.d/http-proxy.conf`, nên build/push image `orchestrator:v2.0`
+  dùng `docker buildx build --builder proxied-builder ... --push` (builder container tự cấu hình
+  proxy riêng qua `--driver-opt env.HTTPS_PROXY=...`), cộng `--build-arg HTTPS_PROXY/HTTP_PROXY` để
+  proxy cũng vào được các bước `RUN` (vd. `go mod download`) bên trong Dockerfile.
+- **`containerd` trên cả 3 worker node** (`db-esdata-worker-redis`, `db-kafka-worker`,
+  `redis-esdata-master`) — cấu hình proxy riêng (tách biệt hoàn toàn với `dockerd`, drop-in
+  systemd + `systemctl daemon-reload && systemctl restart containerd` trên từng node), xác nhận bằng
+  cách tạo Pod thử pull `docker.io/library/alpine:latest` ghim từng node
+  (`spec.nodeName`) — cả 3 node pull thành công (~10-14s mỗi node) sau khi cấu hình xong.
+
+Sau khi xác nhận cả 3 node pull trực tiếp được, chuyển toàn bộ ~38 manifest dưới `deploy/demo/`,
+`deploy/fault-manager/`, `deploy/observability/`, `deploy/rca/` từ `nxrm-dso.mobifone.vn/dockerhub/...`
+/ `nxrm-dso.mobifone.vn/quayio/...` sang image gốc thật (`docker.io/...`, `redis:7-alpine`,
+`clickhouse/clickhouse-server:24.8`, v.v.), và xóa
+`deploy/observability/kube-prometheus-stack-mirror-values.yaml` (mục 10.2 item 3) vì override
+`image.registry` không còn cần thiết.
+
+**Không đổi**, vẫn giữ nguyên vì không liên quan tới quyền pull registry:
+- 3 image không có mirror nào từng hoạt động (mục 10.2 item 2:
+  `ghcr.io/resmoio/kubernetes-event-exporter:latest`, `ghcr.io/jkroepke/kube-webhook-certgen:1.8.8`,
+  `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0`) — vẫn chạy từ image đã
+  `ctr images import` thủ công trước đó, `pullPolicy`/`nodeSelector` ghim theo node import không đổi.
+- Route Gemini API và Grafana vẫn cần `HTTPS_PROXY`/`NO_PROXY` như mục 10.3/10.5 — proxy Internet
+  giờ có ở tầng containerd/dockerd, không thay thế được nhu cầu proxy tầng ứng dụng cho các cuộc gọi
+  ra ngoài cụm.
+
+**Lưu ý cho lần `helm upgrade` kube-prometheus-stack kế tiếp:** chỉ còn 2 file values
+(`kube-prometheus-stack-values.yaml` + `alertmanager-values.yaml`), không còn file mirror thứ 3 —
+nhưng quy tắc mục 10.5 vẫn giữ nguyên tinh thần: áp dụng **toàn bộ** values file còn lại của release
+cùng lúc, không tách lẻ.
 
 ---
 
