@@ -28,6 +28,19 @@ alertmanager:
       routes:
         - matchers: [alertname = "Watchdog"]
           receiver: "null"
+        # Manual-investigation mode (rcactl list/scan/analyze): a rule
+        # opts in by adding label investigation_mode: manual. Placed
+        # before the demo route below since Alertmanager routes are
+        # first-match-wins and this matcher is more specific — without
+        # this ordering, a manual-mode alert with namespace=demo would
+        # match the demo route first and silently skip this one. No
+        # existing PrometheusRule carries this label yet, so this route
+        # never fires until one is deliberately opted in.
+        - matchers: [investigation_mode = "manual"]
+          receiver: orchestrator-webhook-manual
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 1h
         # Matches on the service label existing rather than listing
         # alertnames one by one — HighErrorRate (added after scenario
         # #2 showed HighP99Latency alone can't see fast-failing errors)
@@ -53,4 +66,8 @@ alertmanager:
       - name: orchestrator-webhook
         webhook_configs:
           - url: "http://orchestrator.observability.svc.cluster.local:8080/webhook"
+            send_resolved: false
+      - name: orchestrator-webhook-manual
+        webhook_configs:
+          - url: "http://orchestrator.observability.svc.cluster.local:8080/webhook/manual"
             send_resolved: false

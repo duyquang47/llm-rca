@@ -1,0 +1,29 @@
+# Dedicated alert for exercising the manual-investigation route
+# end-to-end with a real Alertmanager-fired webhook, without touching
+# demo-slo-alerts (prometheusrule.yaml) — that rule's alerts feed the
+# automatic benchmark pipeline for all 13 scenarios; relabeling it
+# would divert every latency-based scenario's alert into manual mode.
+# This rule mirrors HighP99Latency's expr but scoped to inventory only
+# and carries investigation_mode: manual, so it fires additively
+# alongside the existing alert, not instead of it.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-manual-investigation-alerts
+  namespace: observability
+  labels: {release: kube-prometheus-stack}
+spec:
+  groups:
+    - name: demo-manual-investigation
+      rules:
+        - alert: HighP99LatencyManual
+          expr: |
+            histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{exported_job="inventory"}[1m])) by (le, exported_job)) > 1
+          for: 30s
+          labels:
+            severity: critical
+            namespace: demo
+            service: "{{ $labels.exported_job }}"
+            investigation_mode: manual
+          annotations:
+            summary: "[manual investigation] p99 latency for {{ $labels.exported_job }} exceeded 1s"

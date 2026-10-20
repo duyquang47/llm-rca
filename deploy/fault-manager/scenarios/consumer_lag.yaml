@@ -1,0 +1,20 @@
+name: consumer_lag
+steps:
+  - target: notify-worker
+    action: scale_deployment
+    params:
+      replicas: 0
+  - action: wait
+    duration: 120s
+  - target: notify-worker
+    action: reset_scale
+ground_truth:
+  service: notify-worker
+  cause: consumer_scaled_down
+  distractors: [redis_down, traffic_spike]
+context_assertions:
+  must_include_service: [notify-worker]
+  must_rank_in_top3: notify-worker
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

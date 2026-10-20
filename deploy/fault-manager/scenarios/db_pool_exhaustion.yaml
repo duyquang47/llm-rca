@@ -1,0 +1,27 @@
+name: db_pool_exhaustion
+steps:
+  - target: inventory
+    action: set_config
+    params:
+      route: db
+      pool_size: 2
+  - action: burst_load
+    duration: 60s
+    params:
+      url: "http://gateway.demo:8080/create?user_id=1&id=1"
+      concurrency: 30
+  - target: inventory
+    action: reset
+    params: {route: db}
+ground_truth:
+  service: inventory
+  cause: connection_pool_exhausted
+  distractors: [postgres_slow, traffic_spike]
+context_assertions:
+  must_include_service: [inventory, order]
+  must_rank_in_top3: inventory
+  must_include_metric_delta:
+    - {name_matches: "db_pool_wait", min_pct_diff: 100}
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

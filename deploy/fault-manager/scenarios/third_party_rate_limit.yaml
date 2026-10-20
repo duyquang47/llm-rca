@@ -1,0 +1,25 @@
+name: third_party_rate_limit
+steps:
+  - target: thirdparty-mock
+    action: set_config
+    params:
+      route: /pay
+      error: {probability: 1.0, code: 429}
+  - action: wait
+    duration: 90s
+  - target: thirdparty-mock
+    action: reset
+    params: {route: /pay}
+ground_truth:
+  service: thirdparty-mock
+  cause: third_party_rate_limit
+  distractors: [payment_bug, network_issue]
+context_assertions:
+  must_include_service: [thirdparty-mock, payment]
+  must_rank_in_top3: thirdparty-mock
+  must_include_log_template_matching: "(?i)downstream call failed"
+  must_include_metric_delta:
+    - {name_matches: "http_server_request_duration", min_pct_diff: 20}
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

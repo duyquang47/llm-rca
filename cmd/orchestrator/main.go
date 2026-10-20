@@ -50,11 +50,12 @@ type alertmanagerWebhook struct {
 }
 
 type server struct {
-	grouper *incident.Grouper
-	source  telemetry.Source
-	store   *incident.Store
-	logger  *slog.Logger
-	llm     *gemini.Client
+	grouper     *incident.Grouper
+	source      telemetry.Source
+	store       *incident.Store
+	manualScans *incident.ManualScanStore
+	logger      *slog.Logger
+	llm         *gemini.Client
 }
 
 func main() {
@@ -96,18 +97,30 @@ func run() error {
 		return fmt.Errorf("ensure incidents schema: %w", err)
 	}
 
+	manualScans := incident.NewManualScanStore(rawConn)
+	if err := manualScans.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure manual_scans schema: %w", err)
+	}
+
 	srv := &server{
-		grouper: incident.NewGrouper(),
-		source:  source,
-		store:   store,
-		logger:  logger,
-		llm:     gemini.New(apiKey, model),
+		grouper:     incident.NewGrouper(),
+		source:      source,
+		store:       store,
+		manualScans: manualScans,
+		logger:      logger,
+		llm:         gemini.New(apiKey, model),
 	}
 
 	go srv.refreshGraphLoop(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", srv.handleWebhook)
+	mux.HandleFunc("/webhook/manual", srv.handleWebhookManual)
+	mux.HandleFunc("GET /incidents", srv.handleListIncidents)
+	mux.HandleFunc("GET /incidents/{id}", srv.handleGetIncident)
+	mux.HandleFunc("POST /incidents/{id}/scan-service", srv.handleScanService)
+	mux.HandleFunc("POST /incidents/{id}/scan-k8s", srv.handleScanK8s)
+	mux.HandleFunc("POST /incidents/{id}/analyze", srv.handleAnalyze)
 	logger.Info("incident-orchestrator listening", "addr", listen)
 	return http.ListenAndServe(listen, mux)
 }
@@ -173,20 +186,7 @@ func (s *server) analyze(ctx context.Context, inc *incident.Incident) {
 	inc.State = incident.StateAnalyzing
 	log.Info("analyzing", "services", inc.Services)
 
-	primaryService := inc.Services[0]
-	window := telemetry.Window{
-		From:    inc.StartedAt.Add(-2 * time.Minute),
-		To:      time.Now(),
-		Service: primaryService,
-	}
-	alertSummary := contextpack.AlertSummary{
-		Name:     inc.Alerts[0].Name,
-		Service:  primaryService,
-		Severity: inc.Alerts[0].Severity,
-		Message:  inc.Alerts[0].Message,
-	}
-
-	pack, err := builder.Build(ctx, s.source, window, alertSummary, inc.ID)
+	pack, err := builder.Build(ctx, s.source, windowFor(inc), alertSummaryFor(inc), inc.ID)
 	if err != nil {
 		log.Error("build context pack failed", "err", err)
 		inc.State = incident.StateFailed
@@ -213,7 +213,7 @@ func (s *server) analyze(ctx context.Context, inc *incident.Incident) {
 	resultJSON, _ := json.Marshal(result)
 	if err := s.store.Insert(ctx, incident.Record{
 		IncidentID:    inc.ID,
-		ScenarioName:  primaryService,
+		ScenarioName:  inc.Services[0],
 		StartedAtUnix: inc.StartedAt.Unix(),
 		ContextPack:   string(packJSON),
 		PackVersion:   pack.Version,
@@ -222,6 +222,7 @@ func (s *server) analyze(ctx context.Context, inc *incident.Incident) {
 		LLMOutput:     string(resultJSON),
 		TokenCount:    uint32(usage.InputTokens + usage.OutputTokens),
 		LatencyMs:     uint32(latency.Milliseconds()),
+		Mode:          "auto",
 	}); err != nil {
 		log.Error("store incident failed", "err", err)
 		inc.State = incident.StateFailed
@@ -230,6 +231,27 @@ func (s *server) analyze(ctx context.Context, inc *incident.Incident) {
 
 	inc.State = incident.StateDone
 	log.Info("done", "top_cause", topCause(result), "latency_ms", latency.Milliseconds())
+}
+
+// windowFor and alertSummaryFor are shared by the auto path's
+// analyze() and the manual path's handlers in manual.go — both derive
+// the same telemetry.Window/contextpack.AlertSummary from an
+// Incident's first-alert/primary-service data.
+func windowFor(inc *incident.Incident) telemetry.Window {
+	return telemetry.Window{
+		From:    inc.StartedAt.Add(-2 * time.Minute),
+		To:      time.Now(),
+		Service: inc.Services[0],
+	}
+}
+
+func alertSummaryFor(inc *incident.Incident) contextpack.AlertSummary {
+	return contextpack.AlertSummary{
+		Name:     inc.Alerts[0].Name,
+		Service:  inc.Services[0],
+		Severity: inc.Alerts[0].Severity,
+		Message:  inc.Alerts[0].Message,
+	}
 }
 
 func topCause(result llm.RCAResult) string {

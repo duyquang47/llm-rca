@@ -1,0 +1,40 @@
+name: retry_storm
+steps:
+  - target: inventory
+    action: set_config
+    params:
+      route: /check
+      error: {probability: 1.0, code: 500}
+  - target: order
+    action: set_config
+    params:
+      route: inventory
+      retry: 2
+  - target: gateway
+    action: set_config
+    params:
+      route: order
+      retry: 2
+  - action: wait
+    duration: 90s
+  - target: inventory
+    action: reset
+    params: {route: /check}
+  - target: order
+    action: reset
+    params: {route: inventory}
+  - target: gateway
+    action: reset
+    params: {route: order}
+ground_truth:
+  service: inventory
+  cause: retry_storm_amplification
+  distractors: [gateway_overload, traffic_spike]
+context_assertions:
+  must_include_service: [inventory, order, gateway]
+  must_rank_in_top3: inventory
+  must_include_span_repeated:
+    - {name: "HTTP GET", min_count: 3}
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

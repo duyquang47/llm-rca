@@ -1,0 +1,24 @@
+name: n_plus_one_query
+steps:
+  - target: inventory
+    action: set_config
+    params:
+      route: db
+      n_plus_one: true
+  - action: wait
+    duration: 90s
+  - target: inventory
+    action: reset
+    params: {route: db}
+ground_truth:
+  service: inventory
+  cause: n_plus_one_query
+  distractors: [postgres_slow, traffic_spike]
+context_assertions:
+  must_include_service: [inventory]
+  must_rank_in_top3: inventory
+  must_include_span_repeated:
+    - {name: "pg.query", min_count: 3}
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

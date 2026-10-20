@@ -1,0 +1,20 @@
+name: poison_message
+steps:
+  - action: publish_poison_message
+    params:
+      addr: "redis.demo:6379"
+      stream: "notifications"
+      count: 30
+  - action: wait
+    duration: 90s
+ground_truth:
+  service: notify-worker
+  cause: poison_message
+  distractors: [consumer_lag, config_error]
+context_assertions:
+  must_include_service: [notify-worker]
+  must_rank_in_top3: notify-worker
+  must_include_k8s_event_matching: "(?i)BackOff"
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

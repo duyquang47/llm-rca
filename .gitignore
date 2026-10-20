@@ -27,3 +27,5 @@ kubeconfig*
 # Build / logs
 *.log
 dist/
+.claude/settings.local.json
+/rcactl

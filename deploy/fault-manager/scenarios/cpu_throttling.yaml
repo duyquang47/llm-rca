@@ -1,0 +1,29 @@
+name: cpu_throttling
+steps:
+  - target: inventory
+    action: patch_cpu_limit
+    params:
+      millicores: 100
+  - target: inventory
+    action: sustain_fault
+    duration: 90s
+    params:
+      route: /check
+      cpu_burn: true
+  - target: inventory
+    action: reset_cpu_limit
+  - target: inventory
+    action: reset
+    params: {route: /check}
+ground_truth:
+  service: inventory
+  cause: cpu_throttling
+  distractors: [code_slow, traffic_spike]
+context_assertions:
+  must_include_service: [inventory]
+  must_rank_in_top3: inventory
+  must_include_metric_delta:
+    - {name_matches: "cpu_throttled_periods_ratio", min_pct_diff: 100}
+  must_not_include: ["fault", "inject", "fault-manager", "_fault"]
+  max_tokens: 8000
+  max_services_included: 6

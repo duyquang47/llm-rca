@@ -85,6 +85,46 @@ func (g *Grouper) connected(inc *Incident, alert Alert) bool {
 	return false
 }
 
+// List returns a snapshot of all currently-tracked incidents (both
+// auto and manual — Grouper doesn't distinguish mode). Safe to use
+// without further locking; callers get a point-in-time copy of the
+// slice, not a live view.
+func (g *Grouper) List() []*Incident {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]*Incident, len(g.incidents))
+	copy(out, g.incidents)
+	return out
+}
+
+// Get looks up one incident by ID.
+func (g *Grouper) Get(id string) (*Incident, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, inc := range g.incidents {
+		if inc.ID == id {
+			return inc, true
+		}
+	}
+	return nil, false
+}
+
+// Touch refreshes an incident's UpdatedAt to now. Must be called on
+// every manual scan/analyze interaction — expire() drops incidents
+// whose window has closed relative to UpdatedAt, so a manual
+// investigation an SRE steps away from for longer than the window
+// otherwise vanishes from List() without warning.
+func (g *Grouper) Touch(id string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, inc := range g.incidents {
+		if inc.ID == id {
+			inc.UpdatedAt = time.Now()
+			return
+		}
+	}
+}
+
 // expire drops incidents whose window has closed relative to "now" so
 // the incident list doesn't grow without bound and old incidents
 // don't keep absorbing unrelated new alerts on a since-reused service.

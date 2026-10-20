@@ -109,4 +109,12 @@ type ContextPack struct {
 
 	TokenEstimate int      `json:"token_estimate"`
 	Truncated     []string `json:"truncated"`
+
+	// NotScanned lists pack sections that were never collected (manual
+	// investigation flow, where an SRE can request just the "service"
+	// or just the "k8s" scan group before analyzing) — as opposed to
+	// collected but empty. omitempty keeps the auto path's pack (which
+	// always scans everything) byte-identical to before this field
+	// existed.
+	NotScanned []string `json:"not_scanned,omitempty"`
 }

@@ -35,7 +35,8 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 			score_top1       Float32,
 			score_mrr        Float32,
 			human_verdict    Enum8('' = 0, 'correct' = 1, 'partial' = 2, 'wrong' = 3),
-			human_note       String
+			human_note       String,
+			mode             Enum8('auto' = 0, 'manual' = 1)
 		) ENGINE = MergeTree ORDER BY (started_at, incident_id)`)
 }
 
@@ -50,6 +51,13 @@ type Record struct {
 	LLMOutput     string
 	TokenCount    uint32
 	LatencyMs     uint32
+	// Mode is "auto" (the alert-driven pipeline in cmd/orchestrator's
+	// analyze()) or "manual" (an SRE-driven rcactl scan/analyze
+	// session) — evaluator.findIncident matches purely by time window,
+	// so this disambiguates a manual investigation that happens to
+	// overlap a benchmark scenario's window. Must be set explicitly by
+	// every caller; there is no implicit default.
+	Mode string
 }
 
 func (s *Store) Insert(ctx context.Context, r Record) error {
@@ -57,10 +65,10 @@ func (s *Store) Insert(ctx context.Context, r Record) error {
 		INSERT INTO incidents
 			(incident_id, scenario_name, started_at, context_pack, pack_version,
 			 prompt_version, llm_model, llm_output, ground_truth, token_count,
-			 latency_ms, score_top1, score_mrr, human_verdict, human_note)
-		VALUES (?, ?, fromUnixTimestamp64Milli(?), ?, ?, ?, ?, ?, '', ?, ?, 0, 0, '', '')`,
+			 latency_ms, score_top1, score_mrr, human_verdict, human_note, mode)
+		VALUES (?, ?, fromUnixTimestamp64Milli(?), ?, ?, ?, ?, ?, '', ?, ?, 0, 0, '', '', ?)`,
 		r.IncidentID, r.ScenarioName, r.StartedAtUnix*1000, r.ContextPack, r.PackVersion,
-		r.PromptVersion, r.LLMModel, r.LLMOutput, r.TokenCount, r.LatencyMs)
+		r.PromptVersion, r.LLMModel, r.LLMOutput, r.TokenCount, r.LatencyMs, r.Mode)
 	if err != nil {
 		return fmt.Errorf("insert incident record: %w", err)
 	}

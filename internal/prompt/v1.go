@@ -33,6 +33,8 @@ Hãy trả lời DUY NHẤT bằng JSON hợp lệ theo đúng schema sau, khôn
 
 Xếp hạng theo mức độ tin cậy giảm dần. Chỉ dựa vào bằng chứng có trong context pack, không suy đoán ngoài dữ liệu được cung cấp.
 
+Nếu context pack có trường "not_scanned" liệt kê tên phần nào (VD "dependency_graph", "k8s_context", "metric_diffs"), phần đó CHƯA được thu thập, không phải đã thu thập và rỗng — không được suy luận nguyên nhân từ sự vắng mặt của phần đó.
+
 Context pack:
 `
 
