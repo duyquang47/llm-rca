@@ -73,21 +73,6 @@ data:
           metadata: [k8s.pod.name, k8s.deployment.name, k8s.node.name, k8s.namespace.name]
       batch: {timeout: 5s}
 
-    connectors:
-      # Feeds Jaeger's Service Performance Monitoring (Monitor tab, see
-      # jaeger.yaml). Keep the connector's default "traces.span.metrics"
-      # namespace — Jaeger's support-spanmetrics-connector mode hardcodes
-      # that exact prefix in its PromQL templates (confirmed via Jaeger
-      # debug logs: it queries "traces_span_metrics_calls", not
-      # "calls_total"). The Prometheus exporter always appends _total to
-      # counters regardless of name (based on metric type, not literal
-      # name) so that mismatch can't be fixed here — see the
-      # jaeger-spm-recording-rules PrometheusRule
-      # (deploy/observability/prometheusrule-jaeger-spm.yaml) which
-      # aliases traces_span_metrics_calls_total -> traces_span_metrics_calls
-      # inside Prometheus instead.
-      spanmetrics: {}
-
     exporters:
       clickhouse:
         endpoint: tcp://clickhouse.observability:9000?username=otel&password=otel
@@ -95,22 +80,27 @@ data:
         ttl: 48h
       prometheus:
         endpoint: 0.0.0.0:8889
-      # Trial-only fan-out so traces are also browsable in the Jaeger UI
-      # (deploy/observability/jaeger.yaml) alongside the clickhouse
-      # exporter RCA itself depends on — additive, does not replace it.
-      otlp/jaeger:
-        endpoint: jaeger.observability:4317
+      # Additive fan-out for Coroot (coroot-values.yaml): it shows SDK
+      # spans/logs next to its own eBPF data, per service. Lands in Coroot's
+      # own coroot_<project> DB (24h TTL), not `otel`. No API key — the
+      # operator's default project accepts keyless ingest, same as its
+      # node-agents.
+      otlp/coroot:
+        endpoint: coroot-coroot.coroot:4317
+        # Coroot's gRPC server has no gzip decompressor registered — with
+        # the exporter's default gzip every batch is rejected (Unimplemented)
+        # and dropped. In-cluster traffic, so uncompressed is fine.
+        compression: none
         tls:
           insecure: true
 
     service:
       pipelines:
-        traces:            {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse, spanmetrics, otlp/jaeger]}
-        logs:               {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse]}
+        traces:            {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse, otlp/coroot]}
+        logs:               {receivers: [otlp], processors: [k8sattributes, batch], exporters: [clickhouse, otlp/coroot]}
         logs/events:        {receivers: [filelog], processors: [batch], exporters: [clickhouse]}
         logs/orchestrator:  {receivers: [filelog/orchestrator], processors: [batch], exporters: [clickhouse]}
         metrics:            {receivers: [otlp], processors: [k8sattributes, batch], exporters: [prometheus]}
-        metrics/spanmetrics: {receivers: [spanmetrics], exporters: [prometheus]}
 ---
 apiVersion: apps/v1
 kind: Deployment

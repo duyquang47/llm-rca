@@ -1,5 +1,5 @@
 # Three namespaces (originally four per CLAUDE.md §2 — `rca` was later
-# merged into `observability`, see MIGRATE_CLOUD.md). `fault-manager`
+# merged into `observability`). `fault-manager`
 # is kept isolated from scrape/log pipelines at the
 # NetworkPolicy/collector-config layer, not here — see
 # deploy/networkpolicy/.

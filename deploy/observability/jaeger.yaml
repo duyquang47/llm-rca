@@ -9,7 +9,12 @@ metadata:
   name: jaeger
   namespace: observability
 spec:
-  replicas: 1
+  # Parked at 0: Coroot (coroot-values.yaml) now receives the same OTel
+  # traces with longer retention, and otel-collector no longer exports
+  # here (otlp/jaeger + spanmetrics removed). Kept for one trial period
+  # in case something turns out to be missing; delete this file and
+  # prometheusrule-jaeger-spm.yaml afterwards.
+  replicas: 0
   selector:
     matchLabels: {app: jaeger}
   template:

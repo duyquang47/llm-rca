@@ -350,6 +350,8 @@ func (s *Server) callDownstream(ctx context.Context, inbound *http.Request, call
 	return fmt.Errorf("all %d attempts to %s failed: %w", attempts, call.Name, lastErr)
 }
 
+const streamMaxLen = 10000
+
 func (s *Server) publish(ctx context.Context, pub *config.Publish) error {
 	if pub.Addr == "" {
 		return fmt.Errorf("publish.addr is required in config")
@@ -365,8 +367,16 @@ func (s *Server) publish(ctx context.Context, pub *config.Publish) error {
 		values["traceparent"] = tp
 	}
 
+	// MaxLen caps the stream: XACK never deletes entries, so uncapped it
+	// grew by every request (2.4M entries / 259MB at 20 rps) until redis
+	// hit its 512Mi limit — BGSAVE forks were OOM-killed ~300k times and
+	// redis itself eventually, failing order's cache/publish calls. 10000
+	// is ~8 min of traffic, far above case #9's 120s backlog, so trimming
+	// never drops entries the consumer hasn't had a chance to read.
 	return s.redisClient(pub.Addr).XAdd(ctx, &redis.XAddArgs{
 		Stream: pub.Stream,
+		MaxLen: streamMaxLen,
+		Approx: true,
 		Values: values,
 	}).Err()
 }

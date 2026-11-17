@@ -1,3 +1,4 @@
+# Build (context = repo root, needs go.mod): docker build -f cmd/evaluator/Dockerfile -t quang47/llm-rca-evaluator:TAG .
 # cmd/evaluator — matches an incident against ground truth, scores
 # top-1/MRR (or recall for multi-cause scenarios), runs
 # context_assertions, writes scores to ClickHouse. See deploy/fault-manager/.

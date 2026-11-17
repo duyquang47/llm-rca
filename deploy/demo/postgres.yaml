@@ -33,7 +33,7 @@ spec:
           volumeMounts:
             - {name: init, mountPath: /docker-entrypoint-initdb.d}
           resources:
-            requests: {cpu: 250m, memory: 256Mi}
+            requests: {cpu: 100m, memory: 128Mi}  # uses ~30Mi; limit unchanged
             limits: {cpu: 1000m, memory: 1Gi}
       volumes:
         - name: init

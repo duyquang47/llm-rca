@@ -1,3 +1,4 @@
+# Build (context = repo root, needs go.mod): docker build -f cmd/faultctl/Dockerfile -t quang47/llm-rca-faultctl:TAG .
 # cmd/faultctl — reads a scenario YAML, injects the fault for real
 # (/_fault calls, direct k8s resource patches, Redis Stream poison
 # messages), writes ground truth. See deploy/fault-manager/.

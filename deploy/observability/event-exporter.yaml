@@ -123,7 +123,7 @@ spec:
       # first landed on), so both pods must share that node. Also the only
       # node this image was manually `ctr images import`-ed onto (ghcr.io
       # unreachable from this cluster, no working mirror found either —
-      # see MIGRATE.md/REPORT.md for the registry situation).
+      # see REPORT.md for the registry situation).
       nodeSelector:
         kubernetes.io/hostname: db-esdata-worker-redis
       serviceAccountName: event-exporter

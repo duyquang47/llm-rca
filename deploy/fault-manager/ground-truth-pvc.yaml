@@ -4,8 +4,7 @@
 # node-pinning reasoning as deploy/observability/k8s-events-pvc.yaml:
 # local-path's WaitForFirstConsumer binding forces every later Job's
 # pod onto whichever node first claimed this PVC, so faultctl and
-# evaluator always land together even across a 4-node cluster. See
-# MIGRATE_CLOUD.md mục 1.
+# evaluator always land together even across a 4-node cluster.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

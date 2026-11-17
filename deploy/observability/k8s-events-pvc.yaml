@@ -4,7 +4,7 @@
 # local-path is WaitForFirstConsumer and pins the PV's nodeAffinity to
 # whichever node first binds it, so the scheduler forces both
 # Deployments referencing this same claim onto that one node without
-# any manual nodeSelector — see MIGRATE_CLOUD.md mục 1.
+# any manual nodeSelector.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

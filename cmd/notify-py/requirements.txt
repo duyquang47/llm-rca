@@ -1,0 +1,4 @@
+redis==5.2.1
+PyYAML==6.0.2
+opentelemetry-distro==0.53b1
+opentelemetry-exporter-otlp==1.32.1

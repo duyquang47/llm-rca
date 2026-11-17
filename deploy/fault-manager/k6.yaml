@@ -8,6 +8,14 @@ data:
     import http from 'k6/http';
 
     export const options = {
+      // Every request has a random user_id in the URL, and k6 interns one
+      // time series per unique tag set — with the default `url` system tag
+      // that's a new series per request, so memory grew until the pod hit
+      // its limit (~7.7h at 20 rps) and wedged, silently stopping all demo
+      // traffic (and thus all traces/logs). Keep only bounded tags; the
+      // request is still identified by tags.name.
+      systemTags: ['status', 'method', 'name', 'scenario', 'expected_response', 'error_code'],
+      discardResponseBodies: true,
       scenarios: {
         background_load: {
           executor: 'constant-arrival-rate',
@@ -44,12 +52,17 @@ spec:
       containers:
         - name: k6
           image: grafana/k6:0.54.0
-          args: ["run", "/scripts/basic.js"]
+          # --no-summary/--no-thresholds: the end-of-test summary keeps every
+          # Trend sample (http_req_duration etc.) in memory to compute
+          # percentiles at the end of the 24h run — still ~13MiB/h of growth
+          # after the systemTags fix, OOMKilled every ~19h. Nothing reads the
+          # summary and the script has no thresholds.
+          args: ["run", "--no-summary", "--no-thresholds", "/scripts/basic.js"]
           volumeMounts:
             - {name: script, mountPath: /scripts}
           resources:
             requests: {cpu: 100m, memory: 64Mi}
-            limits: {cpu: 300m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
       volumes:
         - name: script
           configMap: {name: k6-loadtest}

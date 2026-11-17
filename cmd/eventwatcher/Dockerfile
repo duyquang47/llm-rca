@@ -1,3 +1,4 @@
+# Build (context = repo root, needs go.mod): docker build -f cmd/eventwatcher/Dockerfile -t eventwatcher:local .
 # Own eventwatcher binary (cmd/eventwatcher), built for local-only use on
 # this cluster — no working ghcr.io mirror was found on the internal
 # Nexus (nxrm-dso.mobifone.vn) for kubernetes-event-exporter, so we fall

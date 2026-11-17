@@ -1,3 +1,4 @@
+# Build (context = repo root, needs go.mod): docker build -f cmd/orchestrator/Dockerfile -t quang47/llm-rca-orchestrator:v2.1 .
 # cmd/orchestrator (incident-orchestrator) — groups Alertmanager
 # webhooks into incidents, builds a ContextPack from ClickHouse +
 # Prometheus, calls the LLM, stores the result. See deploy/rca/.

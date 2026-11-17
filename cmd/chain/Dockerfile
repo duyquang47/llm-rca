@@ -1,5 +1,6 @@
+# Build (context = repo root, needs go.mod): docker build -f cmd/chain/Dockerfile -t quang47/go-service-chain:v1.0.1 .
 # Single image for all six service-chain deployments — behavior is
-# determined entirely by the mounted ConfigMap. See CLAUDE.md §4.5, §13.
+# determined entirely by the mounted ConfigMap. See deploy/demo/.
 FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./

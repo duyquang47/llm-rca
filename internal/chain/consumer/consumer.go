@@ -32,8 +32,11 @@ func Run(ctx context.Context, cfg config.Consume, logger *slog.Logger) error {
 	cli := redis.NewClient(&redis.Options{Addr: cfg.Addr})
 	defer cli.Close()
 
-	if err := cli.XGroupCreateMkStream(ctx, cfg.Stream, cfg.Group, "0").Err(); err != nil && !isBusyGroup(err) {
-		return fmt.Errorf("create consumer group: %w", err)
+	// Group creation is retried rather than fatal: a single failure here
+	// (redis OOM-restarting, not up yet) used to return from Run and leave
+	// the pod Running with no consumer at all.
+	if !ensureGroup(ctx, cli, cfg, logger) {
+		return nil
 	}
 
 	logger.InfoContext(ctx, "notify-worker consuming", "stream", cfg.Stream, "group", cfg.Group)
@@ -57,6 +60,18 @@ func Run(ctx context.Context, cfg config.Consume, logger *slog.Logger) error {
 		}
 		if err != nil {
 			logger.ErrorContext(ctx, "xreadgroup failed", "err", err)
+			// redis has no volume here, so a restart drops the group
+			// along with the stream — recreate it instead of
+			// failing every read forever.
+			if isNoGroup(err) {
+				if !ensureGroup(ctx, cli, cfg, logger) {
+					return nil
+				}
+				continue
+			}
+			if !sleepCtx(ctx, time.Second) {
+				return nil
+			}
 			continue
 		}
 
@@ -85,6 +100,38 @@ func processEntry(ctx context.Context, cli *redis.Client, cfg config.Consume, en
 	if err := cli.XAck(msgCtx, cfg.Stream, cfg.Group, entry.ID).Err(); err != nil {
 		logger.ErrorContext(msgCtx, "xack failed", "entry_id", entry.ID, "err", err)
 	}
+}
+
+// ensureGroup creates the consumer group (and stream), retrying with
+// backoff until it succeeds or ctx is canceled (returns false).
+func ensureGroup(ctx context.Context, cli *redis.Client, cfg config.Consume, logger *slog.Logger) bool {
+	backoff := time.Second
+	for {
+		err := cli.XGroupCreateMkStream(ctx, cfg.Stream, cfg.Group, "0").Err()
+		if err == nil || isBusyGroup(err) {
+			return true
+		}
+		logger.ErrorContext(ctx, "create consumer group failed, retrying", "err", err, "backoff", backoff)
+		if !sleepCtx(ctx, backoff) {
+			return false
+		}
+		backoff = min(backoff*2, 30*time.Second)
+	}
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func isNoGroup(err error) bool {
+	return strings.HasPrefix(err.Error(), "NOGROUP")
 }
 
 func isBusyGroup(err error) bool {

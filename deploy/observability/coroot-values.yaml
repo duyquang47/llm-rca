@@ -1,0 +1,72 @@
+# Values for coroot/coroot-ce (rendered verbatim into the Coroot CR's
+# spec by the chart, so every key here is a Coroot CRD field). Applied via:
+#   helm upgrade --install coroot-operator coroot/coroot-operator --version 0.10.6 -n coroot --create-namespace
+#   kubectl -n coroot set env deploy/coroot-operator HTTPS_PROXY=http://10.0.129.34:3128 \
+#     NO_PROXY=.svc,.svc.cluster.local,10.244.0.0/16,10.96.0.0/12
+#   helm upgrade --install coroot coroot/coroot-ce --version 0.3.3 -n coroot -f deploy/observability/coroot-values.yaml
+#
+# The operator looks up component versions on ghcr.io at runtime and its
+# chart has no env passthrough — re-run the `set env` line after every
+# operator helm upgrade, or it can't reach the registry from the
+# isolated pod network. UI: http://<node-ip>:30880 (set the admin
+# password on first visit).
+#
+# Coroot is a UI layer next to the existing stack, not a replacement:
+# it reuses the cluster's ClickHouse (own `coroot` database, so it never
+# touches `otel`) and kube-prometheus-stack's Prometheus (needs
+# enableRemoteWriteReceiver, see kube-prometheus-stack-values.yaml)
+# instead of deploying its own — the worker nodes are already at
+# 75-87% memory. Alerting, RCA and the benchmark keep using the
+# existing Prometheus/Alertmanager/otel schema unchanged.
+
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30880
+
+storage:
+  size: 2Gi
+
+resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: "1", memory: 1536Mi}
+
+externalPrometheus:
+  url: http://kube-prometheus-stack-prometheus.observability:9090
+  remoteWriteURL: http://kube-prometheus-stack-prometheus.observability:9090/api/v1/write
+
+externalClickhouse:
+  address: clickhouse.observability:9000
+  user: otel
+  password: otel
+  # Used as a prefix: Coroot creates one database per project
+  # (coroot_<project-id>), never writing to `otel`.
+  database: coroot
+
+# ClickHouse lives on a worker's root disk with ~13G free — keep
+# Coroot's own data short-lived.
+logsTTL: 24h
+tracesTTL: 24h
+profilesTTL: 24h
+
+nodeAgent:
+  # Profiling is the heaviest ClickHouse writer; off until disk headroom
+  # is confirmed.
+  ebpfProfiler:
+    enabled: false
+  # qrpaysound is another team's app sharing this cluster — out of scope
+  # for llm-rca. The agent's --container-denylist (regex on container IDs
+  # like /k8s/<ns>/<pod>/<container>) drops its metrics, logs and traces
+  # at the source. The cluster-agent still sees it via the k8s API, so
+  # the namespace remains listed in the UI as an inventory entry only.
+  env:
+    - name: CONTAINER_DENYLIST
+      value: ^/k8s/qrpaysound/.*
+  resources:
+    requests: {cpu: 100m, memory: 200Mi}
+    limits: {cpu: 500m, memory: 1Gi}
+
+clusterAgent:
+  resources:
+    requests: {cpu: 100m, memory: 200Mi}
+    limits: {cpu: 500m, memory: 1Gi}

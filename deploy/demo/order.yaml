@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: docker.io/quang47/llm-rca-chain-service:v1.1
+          image: docker.io/quang47/go-service-chain:v1.0.1
           imagePullPolicy: Always
           env:
             - {name: CONFIG_PATH, value: /etc/chain/config.yaml}
@@ -45,7 +45,11 @@ spec:
             - {containerPort: 8080, name: http}
             - {containerPort: 9999, name: fault}
           resources:
-            requests: {cpu: 100m, memory: 256Mi}
+            # Requests sized to observed use (~10-30Mi, <30m CPU at 20 rps) so
+            # the scheduler doesn't reserve 256Mi per pod on full workers.
+            # Limits unchanged: oom_crashloop relies on the 512Mi limit, and
+            # cpu_throttling patches the CPU limit to 100m (needs request <= it).
+            requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 1000m, memory: 512Mi}
           volumeMounts:
             - {name: cfg, mountPath: /etc/chain}

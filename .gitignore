@@ -1,6 +1,6 @@
 # Go
-services/**/bin/
-services/**/*.exe
+cmd/**/bin/
+cmd/**/*.exe
 vendor/
 
 # Python
@@ -29,3 +29,6 @@ kubeconfig*
 dist/
 .claude/settings.local.json
 /rcactl
+
+PLAN.md
+REPORT.md
