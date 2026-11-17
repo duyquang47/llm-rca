@@ -29,7 +29,6 @@ kubeconfig*
 dist/
 .claude/
 /rcactl
-.claude/
 
 PLAN.md
 REPORT.md
