@@ -29,6 +29,7 @@ kubeconfig*
 dist/
 .claude/settings.local.json
 /rcactl
+.claude/
 
 PLAN.md
 REPORT.md
